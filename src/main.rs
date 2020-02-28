@@ -1,4 +1,4 @@
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::fmt::Debug;
 
@@ -15,6 +15,51 @@ fn main() {
     system.get("ping").unwrap().receive(Query::Hit, &mut sender);
     system.get("ping").unwrap().receive(Query::Get, &mut sender);
 
+    println!("sender: {:?}", sender);
+
+    if let Some(ms) = sender.map.get("addr").take() {
+        for m in ms {
+            println!("{:?}", m);
+        }
+    }
+
+    let mut output = Output;
+    let mut untyped = Untyped::default();
+    output.receive("hello there".to_string(), &mut untyped);
+    output.receive(42, &mut untyped);
+    output.receive(HashMap::<(), ()>::new(), &mut untyped);
+    output.receive(Query::Hit, &mut untyped);
+    output.receive(Query::Get, &mut untyped);
+    output.receive(Response::Count(42), &mut untyped);
+
+    println!("{:?}", untyped);
+    let opt = untyped.data.remove("addr");
+    if let Some(ms) = opt {
+        for m in ms {
+            output.receive(m, &mut untyped);
+        }
+    }
+}
+
+struct Output;
+
+impl<Q: Any + Sized + Debug> Actor<Q, String> for Output {
+    fn receive(&mut self, message: Q, sender: &mut dyn Sender<String>) {
+        println!("Received '{:?}' by Output", message);
+
+        let msg = &message as &dyn Any;
+        if is_string(msg) {
+            if let Some(s) = msg.downcast_ref::<String>() {
+                println!("Matched String from Any: '{}'", s);
+                let response = "sup?".to_string();
+                sender.send("addr", response);
+            }
+        }
+    }
+}
+
+fn is_string(s: &dyn Any) -> bool {
+    TypeId::of::<String>() == s.type_id()
 }
 
 struct System<Q: Any + Sized, R: Any + Sized> {
@@ -38,9 +83,10 @@ impl<Q: Any + Sized, R: Any + Sized> System<Q, R> {
 }
 
 trait Sender<T: Any> {
-    fn send(&mut self, address: &String, message: T);
+    fn send(&mut self, address: &str, message: T);
 }
 
+#[derive(Debug)]
 struct Memory<T: Any + Sized> {
     map: HashMap<String, Vec<T>>,
 }
@@ -54,9 +100,21 @@ impl<T: Any + Sized> Memory<T> {
 }
 
 impl<T: Any + Sized + Debug> Sender<T> for Memory<T> {
-    fn send(&mut self, address: &String, message: T) {
+    fn send(&mut self, address: &str, message: T) {
         println!("Sending '{:?}' to '{}'", message, address);
-        self.map.entry(address.clone()).or_default().push(message);
+        self.map.entry(address.to_string()).or_default().push(message);
+    }
+}
+
+#[derive(Default, Debug)]
+struct Untyped<T: Any + Sized> {
+    data: HashMap<String, Vec<T>>,
+}
+
+impl<T: Any + Sized + Debug> Sender<T> for Untyped<T> {
+    fn send(&mut self, address: &str, message: T) {
+        println!("Sent '{:?}' to '{}' via Untyped", message, address);
+        self.data.entry(address.to_string()).or_default().push(message);
     }
 }
 
