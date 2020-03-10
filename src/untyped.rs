@@ -60,12 +60,30 @@ pub fn run() {
         }
     }
 
+    let mut m: Memory<Envelope> = Memory::new();
     let e = Envelope {
         message: Box::new(42 as u64),
         from: "none".to_string(),
     };
-    let mut m: Memory<Envelope> = Memory::new();
     scheduler.actors.get_mut("summator").unwrap().receive2(e, &mut m);
+
+    let e = Envelope {
+        message: Box::new(Something::Thing1(91)),
+        from: "none".to_string(),
+    };
+    scheduler.actors.get_mut("counter").unwrap().receive2(e, &mut m);
+
+    let e = Envelope {
+        message: Box::new(Something::Thing2("enabled".to_string(), false)),
+        from: "none".to_string(),
+    };
+    scheduler.actors.get_mut("counter").unwrap().receive2(e, &mut m);
+
+    let e = Envelope {
+        message: Box::new(Something::RawThing(vec![42, 43, 44])),
+        from: "none".to_string(),
+    };
+    scheduler.actors.get_mut("counter").unwrap().receive2(e, &mut m);
 }
 
 fn is_string(s: &dyn Any) -> bool {
@@ -110,20 +128,32 @@ struct Counter {
     count: usize,
 }
 
+#[derive(Debug)]
+enum Something {
+    Thing1(u64),
+    Thing2(String, bool),
+    RawThing(Vec<u8>),
+}
+
 trait AnyActor {
     fn receive2(&mut self, envelope: Envelope, sender: &mut dyn AnySender);
 }
 
 impl AnyActor for Counter {
     fn receive2(&mut self, envelope: Envelope, sender: &mut dyn AnySender) {
-        if TypeId::of::<usize>() == envelope.message.as_ref().type_id() {
-            if let Some(s) = envelope.message.downcast_ref::<usize>() {
-                println!("Counter receive2: {}", s);
-                let response = Envelope {
-                    message: Box::new("sup?".to_string()),
-                    from: "anonymous".to_string(),
-                };
-                sender.send("ping", response);
+        if let Some(s) = envelope.message.downcast_ref::<usize>() {
+            println!("Counter receive2: {}", s);
+            let response = Envelope {
+                message: Box::new("sup?".to_string()),
+                from: "anonymous".to_string(),
+            };
+            sender.send("ping", response);
+        } else if let Some(smth) = envelope.message.downcast_ref::<Something>() {
+            println!("counter matched something: {:?}", smth);
+            match smth {
+                Something::Thing1(n) => println!("thing1! n={}", n),
+                Something::Thing2(s, f) => println!("thing2! s={}, f={}", s, f),
+                Something::RawThing(bytes) => println!("raw thing! bytes={:?}", bytes)
             }
         }
     }
@@ -195,8 +225,8 @@ impl AnyActor for PingPong {
 }
 
 struct Child {
-    tag: String,
     up: String,
+    tag: String,
     sum: u64,
 }
 
