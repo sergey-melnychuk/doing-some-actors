@@ -7,27 +7,12 @@ pub fn run() {
     scheduler.spawn("ping".to_string(), |tag| Box::new(PingPong::new(tag)));
     scheduler.spawn("pong".to_string(), |tag| Box::new(PingPong::new(tag)));
 
-    {
-        let env = Envelope {
-            message: Box::new("ping".to_string()),
-            from: "pong".to_string(),
-        };
-        scheduler.queue.insert("ping".to_string(), vec![env]);
-    }
-    {
-        let env = Envelope {
-            message: Box::new("pong".to_string()),
-            from: "ping".to_string(),
-        };
-        scheduler.queue.insert("pong".to_string(), vec![env]);
-    }
-    {
-        let env = Envelope {
-            message: Box::new("sup?".to_string()),
-            from: "none".to_string(),
-        };
-        scheduler.queue.insert("ping".to_string(), vec![env]);
-    }
+    let e = Envelope { message: Box::new("ping".to_string()), from: "pong".to_string() };
+    scheduler.queue.insert("ping".to_string(), vec![e]);
+    let e = Envelope { message: Box::new("pong".to_string()), from: "ping".to_string() };
+    scheduler.queue.insert("pong".to_string(), vec![e]);
+    let e = Envelope { message: Box::new("sup?".to_string()), from: "none".to_string() };
+    scheduler.queue.insert("ping".to_string(), vec![e]);
 
     scheduler.spawn("counter".to_string(), |_| Box::new(Counter::default()));
     let e = Envelope { message: Box::new(42 as usize), from: "unknown".to_string() };
@@ -61,28 +46,16 @@ pub fn run() {
     }
 
     let mut m: Memory<Envelope> = Memory::new();
-    let e = Envelope {
-        message: Box::new(42 as u64),
-        from: "none".to_string(),
-    };
+    let e = Envelope { message: Box::new(42 as u64), from: "none".to_string() };
     scheduler.actors.get_mut("summator").unwrap().receive2(e, &mut m);
 
-    let e = Envelope {
-        message: Box::new(Something::Thing1(91)),
-        from: "none".to_string(),
-    };
+    let e = Envelope { message: Box::new(Something::Thing1(91)), from: "none".to_string() };
     scheduler.actors.get_mut("counter").unwrap().receive2(e, &mut m);
 
-    let e = Envelope {
-        message: Box::new(Something::Thing2("enabled".to_string(), false)),
-        from: "none".to_string(),
-    };
+    let e = Envelope { message: Box::new(Something::Thing2("enabled".to_string(), false)), from: "none".to_string() };
     scheduler.actors.get_mut("counter").unwrap().receive2(e, &mut m);
 
-    let e = Envelope {
-        message: Box::new(Something::RawThing(vec![42, 43, 44])),
-        from: "none".to_string(),
-    };
+    let e = Envelope { message: Box::new(Something::RawThing(vec![42, 43, 44])), from: "none".to_string() };
     scheduler.actors.get_mut("counter").unwrap().receive2(e, &mut m);
 }
 
@@ -143,11 +116,8 @@ impl AnyActor for Counter {
     fn receive2(&mut self, envelope: Envelope, sender: &mut dyn AnySender) {
         if let Some(s) = envelope.message.downcast_ref::<usize>() {
             println!("Counter receive2: {}", s);
-            let response = Envelope {
-                message: Box::new("sup?".to_string()),
-                from: "anonymous".to_string(),
-            };
-            sender.send("ping", response);
+            let r = Envelope { message: Box::new("sup?".to_string()), from: "anonymous".to_string() };
+            sender.send("ping", r);
         } else if let Some(smth) = envelope.message.downcast_ref::<Something>() {
             println!("counter matched something: {:?}", smth);
             match smth {
@@ -191,34 +161,24 @@ impl PingPong {
 
 impl AnyActor for PingPong {
     fn receive2(&mut self, envelope: Envelope, sender: &mut dyn AnySender) {
-        if is_string(envelope.message.as_ref()) {
-            if let Some(s) = envelope.message.downcast_ref::<String>() {
-                println!("Actor '{}' (count={}) received message '{}'", self.tag, self.count, s);
-                if self.count >= 3 {
-                    return;
-                }
-                self.count += 1;
-                if s == "ping" {
-                    let r = Envelope {
-                        message: Box::new("pong".to_string()),
-                        from: self.tag.clone(),
-                    };
-                    sender.send(&envelope.from, r);
-                } else if s == "pong" {
-                    let r = Envelope {
-                        message: Box::new("ping".to_string()),
-                        from: self.tag.clone(),
-                    };
-                    sender.send(&envelope.from, r);
-                } else {
-                    println!("PingPong actor received unexpected string: {}", s);
-                    sender.spawn("summator", &self.tag, |tag, parent| Box::new(Child::new(tag, parent)));
-                    let m = Envelope {
-                        message: Box::new(42 as u64),
-                        from: self.tag.clone(),
-                    };
-                    sender.send("summator", m);
-                }
+        if let Some(s) = envelope.message.downcast_ref::<String>() {
+            println!("Actor '{}' (count={}) received message '{}'", self.tag, self.count, s);
+            if self.count >= 3 {
+                return;
+            }
+            self.count += 1;
+            if s == "ping" {
+                let r = Envelope { message: Box::new("pong".to_string()), from: self.tag.clone() };
+                sender.send(&envelope.from, r);
+            } else if s == "pong" {
+                let r = Envelope { message: Box::new("ping".to_string()), from: self.tag.clone() };
+                sender.send(&envelope.from, r);
+            } else {
+                println!("PingPong actor received unexpected string: {}", s);
+                sender.spawn("summator", &self.tag,
+                     |tag, parent| Box::new(Child::new(tag, parent)));
+                let m = Envelope { message: Box::new(42 as u64), from: self.tag.clone() };
+                sender.send("summator", m);
             }
         }
     }
@@ -243,23 +203,14 @@ impl Child {
 impl AnyActor for Child {
     fn receive2(&mut self, envelope: Envelope, sender: &mut dyn AnySender) {
         println!("Actor '{}' receive2 running: {:?}", self.tag, envelope);
-        if TypeId::of::<u64>() == envelope.message.as_ref().type_id() {
-            if let Some(x) = envelope.message.downcast_ref::<u64>() {
-                println!("Actor '{}' received message '{}'", self.tag, x);
-                self.sum += *x;
-            }
-        } else if TypeId::of::<String>() == envelope.message.as_ref().type_id() {
-            if TypeId::of::<String>() == envelope.message.type_id() {
-                if let Some(x) = envelope.message.downcast_ref::<String>() {
-                    println!("Actor '{}' received message '{}'", self.tag, x);
-                    if x == "get" {
-                        let r = Envelope {
-                            message: Box::new(self.sum),
-                            from: self.tag.clone(),
-                        };
-                        sender.send(&envelope.from, r);
-                    }
-                }
+        if let Some(x) = envelope.message.downcast_ref::<u64>() {
+            println!("Actor '{}' received message '{}'", self.tag, x);
+            self.sum += *x;
+        } else if let Some(x) = envelope.message.downcast_ref::<String>() {
+            println!("Actor '{}' received message '{}'", self.tag, x);
+            if x == "get" {
+                let r = Envelope { message: Box::new(self.sum), from: self.tag.clone() };
+                sender.send(&envelope.from, r);
             }
         }
     }
