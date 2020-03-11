@@ -20,7 +20,7 @@ pub fn run() {
 
     let mut epoch: usize = 0;
     while !scheduler.queue.is_empty() {
-        println!("\nepoch: {}", epoch);
+        println!("epoch: {}", epoch);
         epoch += 1;
 
         let mut mem: Memory<Envelope> = Memory::new();
@@ -43,6 +43,7 @@ pub fn run() {
         for (addr, vec) in mem.map.into_iter() {
             scheduler.queue.insert(addr, vec);
         }
+        println!("---");
     }
 
     let mut m: Memory<Envelope> = Memory::new();
