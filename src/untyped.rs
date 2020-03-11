@@ -31,7 +31,7 @@ pub fn run() {
         for (addr, env) in q.into_iter() {
             let mut actor = scheduler.actors.get_mut(&addr).unwrap();
             for e in env {
-                actor.receive2(e, &mut mem);
+                actor.receive(e, &mut mem);
             }
 
             for (tag, actor) in mem.new.drain() {
@@ -48,16 +48,16 @@ pub fn run() {
 
     let mut m: Memory<Envelope> = Memory::new();
     let e = Envelope { message: Box::new(42 as u64), from: "none".to_string() };
-    scheduler.actors.get_mut("summator").unwrap().receive2(e, &mut m);
+    scheduler.actors.get_mut("summator").unwrap().receive(e, &mut m);
 
     let e = Envelope { message: Box::new(Something::Thing1(91)), from: "none".to_string() };
-    scheduler.actors.get_mut("counter").unwrap().receive2(e, &mut m);
+    scheduler.actors.get_mut("counter").unwrap().receive(e, &mut m);
 
     let e = Envelope { message: Box::new(Something::Thing2("enabled".to_string(), false)), from: "none".to_string() };
-    scheduler.actors.get_mut("counter").unwrap().receive2(e, &mut m);
+    scheduler.actors.get_mut("counter").unwrap().receive(e, &mut m);
 
     let e = Envelope { message: Box::new(Something::RawThing(vec![42, 43, 44])), from: "none".to_string() };
-    scheduler.actors.get_mut("counter").unwrap().receive2(e, &mut m);
+    scheduler.actors.get_mut("counter").unwrap().receive(e, &mut m);
 }
 
 fn is_string(s: &dyn Any) -> bool {
@@ -110,13 +110,13 @@ enum Something {
 }
 
 trait AnyActor {
-    fn receive2(&mut self, envelope: Envelope, sender: &mut dyn AnySender);
+    fn receive(&mut self, envelope: Envelope, sender: &mut dyn AnySender);
 }
 
 impl AnyActor for Counter {
-    fn receive2(&mut self, envelope: Envelope, sender: &mut dyn AnySender) {
+    fn receive(&mut self, envelope: Envelope, sender: &mut dyn AnySender) {
         if let Some(s) = envelope.message.downcast_ref::<usize>() {
-            println!("Counter receive2: {}", s);
+            println!("Counter received: {}", s);
             let r = Envelope { message: Box::new("sup?".to_string()), from: "anonymous".to_string() };
             sender.send("ping", r);
         } else if let Some(smth) = envelope.message.downcast_ref::<Something>() {
@@ -137,11 +137,12 @@ trait AnySender {
 
 impl AnySender for Memory<Envelope> {
     fn send(&mut self, address: &str, message: Envelope) {
-        //println!("sending any '{:?}' to address '{}'", message, address);
+        println!("sending any '{:?}' to address '{}'", message, address);
         self.map.entry(address.to_string()).or_default().push(message);
     }
 
     fn spawn(&mut self, address: &str, parent: &str, f: fn(String, String) -> Box<dyn AnyActor>) {
+        println!("spawning actor '{}' of parent '{}'", address, parent);
         self.new.insert(address.to_string(), f(address.to_string(), parent.to_string()));
     }
 }
@@ -161,7 +162,7 @@ impl PingPong {
 }
 
 impl AnyActor for PingPong {
-    fn receive2(&mut self, envelope: Envelope, sender: &mut dyn AnySender) {
+    fn receive(&mut self, envelope: Envelope, sender: &mut dyn AnySender) {
         if let Some(s) = envelope.message.downcast_ref::<String>() {
             println!("Actor '{}' (count={}) received message '{}'", self.tag, self.count, s);
             if self.count >= 3 {
@@ -202,7 +203,7 @@ impl Child {
 }
 
 impl AnyActor for Child {
-    fn receive2(&mut self, envelope: Envelope, sender: &mut dyn AnySender) {
+    fn receive(&mut self, envelope: Envelope, sender: &mut dyn AnySender) {
         println!("Actor '{}' receive2 running: {:?}", self.tag, envelope);
         if let Some(x) = envelope.message.downcast_ref::<u64>() {
             println!("Actor '{}' received message '{}'", self.tag, x);
