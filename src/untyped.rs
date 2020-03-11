@@ -35,8 +35,12 @@ pub fn run() {
             }
 
             for (tag, actor) in mem.new.drain() {
-                println!("spawning actor '{}'", tag.clone());
-                scheduler.actors.insert(tag, actor);
+                if scheduler.actors.contains_key(&tag) {
+                    println!("TODO spawning actor at taken address '{}' was requested", tag);
+                } else {
+                    println!("spawning actor '{}'", tag.clone());
+                    scheduler.actors.insert(tag, actor);
+                }
             }
         }
 
@@ -142,7 +146,7 @@ impl AnySender for Memory<Envelope> {
     }
 
     fn spawn(&mut self, address: &str, parent: &str, f: fn(String, String) -> Box<dyn AnyActor>) {
-        println!("spawning actor '{}' of parent '{}'", address, parent);
+        println!("request for spawning actor '{}' of parent '{}'", address, parent);
         self.new.insert(address.to_string(), f(address.to_string(), parent.to_string()));
     }
 }
@@ -176,7 +180,7 @@ impl AnyActor for PingPong {
                 let r = Envelope { message: Box::new("ping".to_string()), from: self.tag.clone() };
                 sender.send(&envelope.from, r);
             } else {
-                println!("PingPong actor received unexpected string: {}", s);
+                println!("PingPong actor received unexpected string: '{}'", s);
                 sender.spawn("summator", &self.tag,
                      |tag, parent| Box::new(Child::new(tag, parent)));
                 let m = Envelope { message: Box::new(42 as u64), from: self.tag.clone() };
