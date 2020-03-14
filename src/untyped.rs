@@ -1,6 +1,10 @@
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 
+use crate::pool::ThreadPool;
+use std::sync::mpsc::channel;
+use std::sync::{Mutex, Arc};
+
 pub fn run() {
     let mut scheduler = Scheduler::default();
 
@@ -39,7 +43,7 @@ pub fn run() {
                     println!("TODO spawning actor at taken address '{}' was requested", tag);
                 } else {
                     println!("spawning actor '{}'", tag.clone());
-                    scheduler.actors.insert(tag, actor);
+                    scheduler.actors.insert(tag, actor as Box<dyn AnyActor + Send>);
                 }
             }
         }
@@ -64,6 +68,93 @@ pub fn run() {
     scheduler.actors.get_mut("counter").unwrap().receive(e, &mut m);
 }
 
+/////////
+
+enum Event {
+    Mail { tag: String, actor: Box<dyn AnyActor>, queue: Vec<Envelope> },
+}
+
+enum Action {
+    Keep { tag: String, actor: Box<dyn AnyActor> },
+    Spawn { tag: String, actor: Box<dyn AnyActor> },
+    Queue { tag: String, queue: Vec<Envelope> },
+}
+
+fn threaded() {
+    let mut pool = ThreadPool::new(num_cpus::get());
+    let (events_tx, events_rx) = channel();
+    let events_rx = Arc::new(Mutex::new(events_rx));
+    let (actions_tx, actions_rx) = channel();
+
+    let rx = Arc::clone(&events_rx);
+    pool.submit(move || {
+        let mut memory: Memory<Envelope> = Memory::new();
+        loop {
+            let event = rx.lock().unwrap().recv();
+            if let Ok(x) = event {
+                match x {
+                    Event::Mail { tag, mut actor, queue } => {
+                        for envelope in queue.into_iter() {
+                            actor.receive(envelope, &mut memory);
+                        }
+                        actions_tx.send(Action::Keep { tag, actor }).unwrap();
+                    }
+                }
+                for (tag, actor) in memory.new.drain().into_iter() {
+                    let action = Action::Spawn { tag, actor };
+                    actions_tx.send(action).unwrap();
+                }
+                for (tag, queue) in memory.map.drain().into_iter() {
+                    let action = Action::Queue { tag, queue };
+                    actions_tx.send(action).unwrap();
+                }
+            }
+        }
+    });
+
+    let mut scheduler = Scheduler::default();
+    scheduler.spawn("root".to_string(), |tag| Box::new(Root::new(tag)));
+    loop {
+        let action = actions_rx.recv();
+        if let Ok(x) = action {
+            match x {
+                Action::Keep { tag, actor } => {
+                    scheduler.actors.insert(tag, actor);
+                },
+                Action::Spawn { tag, actor } => {
+                    scheduler.actors.insert(tag, actor);
+                },
+                Action::Queue { tag, queue } => {
+                    let actor = scheduler.actors.remove(&tag).unwrap();
+                    let event = Event::Mail { tag, actor, queue };
+                    events_tx.send(event).unwrap();
+                }
+            }
+        }
+    }
+}
+
+struct Root {
+    tag: String,
+}
+
+impl Root {
+    fn new(tag: String) -> Root {
+        Root {
+            tag
+        }
+    }
+}
+
+impl AnyActor for Root {
+    fn receive(&mut self, envelope: Envelope, sender: &mut dyn AnySender) {
+        // effectively this is an infinite loop
+        sender.send(&self.tag, envelope)
+    }
+}
+
+/////////
+
 fn is_string(s: &dyn Any) -> bool {
     TypeId::of::<String>() == s.type_id()
 }
@@ -74,12 +165,12 @@ struct Envelope {
     from: String,
 }
 
-struct Memory<T: Any + Sized> {
+struct Memory<T: Any + Sized + Send> {
     map: HashMap<String, Vec<T>>,
     new: HashMap<String, Box<dyn AnyActor>>,
 }
 
-impl<T: Any + Sized> Memory<T> {
+impl<T: Any + Sized + Send> Memory<T> {
     fn new() -> Memory<T> {
         Memory {
             map: HashMap::new(),
@@ -90,12 +181,12 @@ impl<T: Any + Sized> Memory<T> {
 
 #[derive(Default)]
 struct Scheduler {
-    actors: HashMap<String, Box<dyn AnyActor>>,
+    actors: HashMap<String, Box<dyn AnyActor + Send>>,
     queue: HashMap<String, Vec<Envelope>>,
 }
 
 impl Scheduler {
-    fn spawn(&mut self, tag: String, f: fn(String) -> Box<dyn AnyActor>) {
+    fn spawn(&mut self, tag: String, f: fn(String) -> Box<dyn AnyActor + Send>) {
         let actor = f(tag.clone());
         self.actors.insert(tag, actor);
     }
