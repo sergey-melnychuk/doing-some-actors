@@ -5,3 +5,4 @@ authors = ["sergey-melnychuk"]
 edition = "2018"
 
 [dependencies]
+num_cpus = "1.12.0"
