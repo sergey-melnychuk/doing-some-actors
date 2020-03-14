@@ -6,6 +6,10 @@ use std::sync::mpsc::channel;
 use std::sync::{Mutex, Arc};
 
 pub fn run() {
+    threaded();
+}
+
+fn example() {
     let mut scheduler = Scheduler::default();
 
     scheduler.spawn("ping".to_string(), |tag| Box::new(PingPong::new(tag)));
@@ -87,13 +91,15 @@ fn threaded() {
     let (actions_tx, actions_rx) = channel();
 
     let rx = Arc::clone(&events_rx);
+    let tx = actions_tx.clone();
     pool.submit(move || {
         let mut memory: Memory<Envelope> = Memory::new();
         loop {
-            let event = rx.lock().unwrap().recv();
+            let event = rx.lock().unwrap().try_recv();
             if let Ok(x) = event {
                 match x {
                     Event::Mail { tag, mut actor, queue } => {
+                        println!("event.mail for tag '{}': {} messages", tag, queue.len());
                         for envelope in queue.into_iter() {
                             actor.receive(envelope, &mut memory);
                         }
@@ -114,8 +120,10 @@ fn threaded() {
 
     let mut scheduler = Scheduler::default();
     scheduler.spawn("root".to_string(), |tag| Box::new(Root::new(tag)));
+    scheduler.spawn("ping".to_string(), |tag| Box::new(PingPong::new(tag)));
+    scheduler.spawn("pong".to_string(), |tag| Box::new(PingPong::new(tag)));
     loop {
-        let action = actions_rx.recv();
+        let action = actions_rx.try_recv();
         if let Ok(x) = action {
             match x {
                 Action::Keep { tag, actor } => {
@@ -125,29 +133,42 @@ fn threaded() {
                     scheduler.actors.insert(tag, actor);
                 },
                 Action::Queue { tag, queue } => {
-                    let actor = scheduler.actors.remove(&tag).unwrap();
-                    let event = Event::Mail { tag, actor, queue };
-                    events_tx.send(event).unwrap();
+                    match scheduler.actors.remove(&tag) {
+                        Some(actor) => {
+                            let event = Event::Mail { tag, actor, queue };
+                            events_tx.send(event).unwrap();
+                        },
+                        None => println!("queue is ready ({} envelopes) but actor '{}' is missing", queue.len(), tag)
+                    }
                 }
             }
         }
+        let tick = Envelope { message: Box::new("tick".to_string()), from: "root".to_string() };
+        tx.send(Action::Queue { tag: "root".to_string(), queue: vec![tick] }).unwrap();
     }
 }
 
 struct Root {
     tag: String,
+    done: bool,
 }
 
 impl Root {
     fn new(tag: String) -> Root {
         Root {
-            tag
+            tag,
+            done: false,
         }
     }
 }
 
 impl AnyActor for Root {
     fn receive(&mut self, envelope: Envelope, sender: &mut dyn AnySender) {
+        if !self.done {
+            let e = Envelope { message: Box::new("ping".to_string()), from: "pong".to_string() };
+            sender.send("ping", e);
+            self.done = true;
+        }
         // effectively this is an infinite loop
         sender.send(&self.tag, envelope)
     }
