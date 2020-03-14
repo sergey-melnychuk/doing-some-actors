@@ -43,7 +43,7 @@ pub fn run() {
                     println!("TODO spawning actor at taken address '{}' was requested", tag);
                 } else {
                     println!("spawning actor '{}'", tag.clone());
-                    scheduler.actors.insert(tag, actor as Box<dyn AnyActor + Send>);
+                    scheduler.actors.insert(tag, actor);
                 }
             }
         }
@@ -71,12 +71,12 @@ pub fn run() {
 /////////
 
 enum Event {
-    Mail { tag: String, actor: Box<dyn AnyActor>, queue: Vec<Envelope> },
+    Mail { tag: String, actor: Box<dyn AnyActor + Send>, queue: Vec<Envelope> },
 }
 
 enum Action {
-    Keep { tag: String, actor: Box<dyn AnyActor> },
-    Spawn { tag: String, actor: Box<dyn AnyActor> },
+    Keep { tag: String, actor: Box<dyn AnyActor + Send> },
+    Spawn { tag: String, actor: Box<dyn AnyActor + Send> },
     Queue { tag: String, queue: Vec<Envelope> },
 }
 
@@ -161,13 +161,13 @@ fn is_string(s: &dyn Any) -> bool {
 
 #[derive(Debug)]
 struct Envelope {
-    message: Box<dyn Any>,
+    message: Box<dyn Any + Send>,
     from: String,
 }
 
 struct Memory<T: Any + Sized + Send> {
     map: HashMap<String, Vec<T>>,
-    new: HashMap<String, Box<dyn AnyActor>>,
+    new: HashMap<String, Box<dyn AnyActor + Send>>,
 }
 
 impl<T: Any + Sized + Send> Memory<T> {
@@ -227,7 +227,7 @@ impl AnyActor for Counter {
 
 trait AnySender {
     fn send(&mut self, address: &str, message: Envelope);
-    fn spawn(&mut self, address: &str, parent: &str, f: fn(String, String) -> Box<dyn AnyActor>);
+    fn spawn(&mut self, address: &str, parent: &str, f: fn(String, String) -> Box<dyn AnyActor + Send>);
 }
 
 impl AnySender for Memory<Envelope> {
@@ -236,7 +236,7 @@ impl AnySender for Memory<Envelope> {
         self.map.entry(address.to_string()).or_default().push(message);
     }
 
-    fn spawn(&mut self, address: &str, parent: &str, f: fn(String, String) -> Box<dyn AnyActor>) {
+    fn spawn(&mut self, address: &str, parent: &str, f: fn(String, String) -> Box<dyn AnyActor + Send>) {
         println!("request for spawning actor '{}' of parent '{}'", address, parent);
         self.new.insert(address.to_string(), f(address.to_string(), parent.to_string()));
     }
