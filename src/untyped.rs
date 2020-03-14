@@ -90,36 +90,45 @@ fn threaded() {
     let events_rx = Arc::new(Mutex::new(events_rx));
     let (actions_tx, actions_rx) = channel();
 
-    let rx = Arc::clone(&events_rx);
-    let tx = actions_tx.clone();
-    pool.submit(move || {
-        let mut memory: Memory<Envelope> = Memory::new();
-        loop {
-            let event = rx.lock().unwrap().try_recv();
-            if let Ok(x) = event {
-                match x {
-                    Event::Mail { tag, mut actor, queue } => {
-                        println!("event.mail for tag '{}': {} messages", tag, queue.len());
-                        for envelope in queue.into_iter() {
-                            actor.receive(envelope, &mut memory);
+    for id in 1..=pool.size() {
+        let rx = Arc::clone(&events_rx);
+        let tx = actions_tx.clone();
+
+        pool.submit(move || {
+            let mut memory: Memory<Envelope> = Memory::new();
+            loop {
+                let event = rx.lock().unwrap().try_recv();
+                if let Ok(x) = event {
+                    match x {
+                        Event::Mail { tag, mut actor, queue } => {
+                            println!("[thread-{}] event.mail for tag '{}': {} messages", id, tag, queue.len());
+                            for envelope in queue.into_iter() {
+                                actor.receive(envelope, &mut memory);
+                            }
+                            tx.send(Action::Keep { tag, actor }).unwrap();
                         }
-                        actions_tx.send(Action::Keep { tag, actor }).unwrap();
+                    }
+                    for (tag, actor) in memory.new.drain().into_iter() {
+                        let action = Action::Spawn { tag, actor };
+                        tx.send(action).unwrap();
+                    }
+                    for (tag, queue) in memory.map.drain().into_iter() {
+                        let action = Action::Queue { tag, queue };
+                        tx.send(action).unwrap();
                     }
                 }
-                for (tag, actor) in memory.new.drain().into_iter() {
-                    let action = Action::Spawn { tag, actor };
-                    actions_tx.send(action).unwrap();
-                }
-                for (tag, queue) in memory.map.drain().into_iter() {
-                    let action = Action::Queue { tag, queue };
-                    actions_tx.send(action).unwrap();
-                }
             }
-        }
-    });
+        });
+    }
+
+    let tx = actions_tx.clone();
+    let tick = Envelope { message: Box::new(()), from: "root".to_string() };
+    tx.send(Action::Queue { tag: "root".to_string(), queue: vec![tick] }).unwrap();
+    let ping = Envelope { message: Box::new("ping".to_string()), from: "pong".to_string() };
+    tx.send(Action::Queue { tag: "ping".to_string(), queue: vec![ping] }).unwrap();
 
     let mut scheduler = Scheduler::default();
-    scheduler.spawn("root".to_string(), |tag| Box::new(Root::new(tag)));
+    scheduler.spawn("root".to_string(), |_| Box::new(Root::new()));
     scheduler.spawn("ping".to_string(), |tag| Box::new(PingPong::new(tag)));
     scheduler.spawn("pong".to_string(), |tag| Box::new(PingPong::new(tag)));
     loop {
@@ -143,34 +152,32 @@ fn threaded() {
                 }
             }
         }
-        let tick = Envelope { message: Box::new("tick".to_string()), from: "root".to_string() };
-        tx.send(Action::Queue { tag: "root".to_string(), queue: vec![tick] }).unwrap();
     }
 }
 
 struct Root {
-    tag: String,
-    done: bool,
+    epochs: usize,
 }
 
 impl Root {
-    fn new(tag: String) -> Root {
+    fn new() -> Root {
         Root {
-            tag,
-            done: false,
+            epochs: 0,
         }
+    }
+
+    fn tick(&mut self) -> bool {
+        self.epochs += 1;
+        self.epochs < 10
     }
 }
 
 impl AnyActor for Root {
-    fn receive(&mut self, envelope: Envelope, sender: &mut dyn AnySender) {
-        if !self.done {
-            let e = Envelope { message: Box::new("ping".to_string()), from: "pong".to_string() };
-            sender.send("ping", e);
-            self.done = true;
+    fn receive(&mut self, mut envelope: Envelope, sender: &mut dyn AnySender) {
+        if self.tick() {
+            // effectively this is an infinite loop
+            sender.send("root", envelope);
         }
-        // effectively this is an infinite loop
-        sender.send(&self.tag, envelope)
     }
 }
 
