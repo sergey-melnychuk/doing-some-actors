@@ -188,7 +188,7 @@ fn is_string(s: &dyn Any) -> bool {
 }
 
 #[derive(Debug)]
-struct Envelope {
+pub struct Envelope {
     message: Box<dyn Any + Send>,
     from: String,
 }
@@ -208,13 +208,13 @@ impl<T: Any + Sized + Send> Memory<T> {
 }
 
 #[derive(Default)]
-struct Scheduler {
+pub struct Scheduler {
     actors: HashMap<String, Box<dyn AnyActor + Send>>,
     queue: HashMap<String, Vec<Envelope>>,
 }
 
 impl Scheduler {
-    fn spawn(&mut self, tag: &str, f: fn(&str) -> Box<dyn AnyActor + Send>) {
+    pub fn spawn(&mut self, tag: &str, f: fn(&str) -> Box<dyn AnyActor + Send>) {
         let actor = f(tag);
         self.actors.insert(tag.to_string(), actor);
     }
@@ -232,7 +232,7 @@ enum Something {
     RawThing(Vec<u8>),
 }
 
-trait AnyActor {
+pub trait AnyActor {
     fn receive(&mut self, envelope: Envelope, sender: &mut dyn AnySender);
 }
 
@@ -253,7 +253,7 @@ impl AnyActor for Counter {
     }
 }
 
-trait AnySender {
+pub trait AnySender {
     fn send(&mut self, address: &str, message: Envelope);
     fn spawn(&mut self, address: &str, parent: &str, f: fn(&str, &str) -> Box<dyn AnyActor + Send>);
 }
