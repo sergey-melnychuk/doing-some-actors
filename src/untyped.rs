@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use crate::pool::ThreadPool;
 use std::sync::mpsc::channel;
 use std::sync::{Mutex, Arc};
+use std::time::Instant;
 
 pub fn run() {
     start();
@@ -116,7 +117,7 @@ pub fn start_actor_runtime(mut pool: ThreadPool, mut scheduler: Scheduler) {
                 if let Ok(x) = event {
                     match x {
                         Event::Mail { tag, mut actor, queue } => {
-                            println!("[thread-{}] event.mail for tag '{}': {} messages", id, tag, queue.len());
+                            //println!("[thread-{}] event.mail for tag '{}': {} messages", id, tag, queue.len());
                             for envelope in queue.into_iter() {
                                 actor.receive(envelope, &mut memory);
                             }
@@ -140,6 +141,9 @@ pub fn start_actor_runtime(mut pool: ThreadPool, mut scheduler: Scheduler) {
         actions_tx.send(Action::Queue { tag, queue }).unwrap();
     }
 
+    let mut epoch: usize = 0;
+    let mut messages: usize = 0;
+    let mut start = Instant::now();
     loop {
         let action = actions_rx.try_recv();
         if let Ok(x) = action {
@@ -156,6 +160,7 @@ pub fn start_actor_runtime(mut pool: ThreadPool, mut scheduler: Scheduler) {
                     scheduler.actors.insert(tag, actor);
                 },
                 Action::Queue { tag, queue } => {
+                    messages += queue.len();
                     match scheduler.actors.remove(&tag) {
                         Some(actor) => {
                             let event = Event::Mail { tag, actor, queue };
@@ -170,6 +175,13 @@ pub fn start_actor_runtime(mut pool: ThreadPool, mut scheduler: Scheduler) {
                     }
                 }
             }
+        }
+        epoch += 1;
+        if epoch % 10000 == 0 {
+            let elapsed = start.elapsed();
+            println!("counter={} messages={} elapsed: {} ms", epoch, messages, elapsed.as_millis());
+            start = Instant::now();
+            messages = 0;
         }
     }
 }
@@ -282,7 +294,7 @@ pub trait AnySender {
 
 impl AnySender for Memory<Envelope> {
     fn send(&mut self, address: &str, message: Envelope) {
-        println!("sending message from '{}' to '{}'", message.from, address);
+        //println!("sending message from '{}' to '{}'", message.from, address);
         self.map.entry(address.to_string()).or_default().push(message);
     }
 
