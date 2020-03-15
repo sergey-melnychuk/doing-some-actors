@@ -12,8 +12,8 @@ pub fn run() {
 fn example() {
     let mut scheduler = Scheduler::default();
 
-    scheduler.spawn("ping".to_string(), |tag| Box::new(PingPong::new(tag)));
-    scheduler.spawn("pong".to_string(), |tag| Box::new(PingPong::new(tag)));
+    scheduler.spawn("ping", |tag| Box::new(PingPong::new(tag)));
+    scheduler.spawn("pong", |tag| Box::new(PingPong::new(tag)));
 
     let e = Envelope { message: Box::new("ping".to_string()), from: "pong".to_string() };
     scheduler.queue.insert("ping".to_string(), vec![e]);
@@ -22,7 +22,7 @@ fn example() {
     let e = Envelope { message: Box::new("sup?".to_string()), from: "none".to_string() };
     scheduler.queue.insert("ping".to_string(), vec![e]);
 
-    scheduler.spawn("counter".to_string(), |_| Box::new(Counter::default()));
+    scheduler.spawn("counter", |_| Box::new(Counter::default()));
     let e = Envelope { message: Box::new(42 as usize), from: "unknown".to_string() };
     scheduler.queue.insert("counter".to_string(), vec![e]);
 
@@ -128,9 +128,9 @@ fn threaded() {
     tx.send(Action::Queue { tag: "ping".to_string(), queue: vec![ping] }).unwrap();
 
     let mut scheduler = Scheduler::default();
-    scheduler.spawn("root".to_string(), |_| Box::new(Root::new()));
-    scheduler.spawn("ping".to_string(), |tag| Box::new(PingPong::new(tag)));
-    scheduler.spawn("pong".to_string(), |tag| Box::new(PingPong::new(tag)));
+    scheduler.spawn("root", |_| Box::new(Root::new()));
+    scheduler.spawn("ping", |tag| Box::new(PingPong::new(tag)));
+    scheduler.spawn("pong", |tag| Box::new(PingPong::new(tag)));
     loop {
         let action = actions_rx.try_recv();
         if let Ok(x) = action {
@@ -214,9 +214,9 @@ struct Scheduler {
 }
 
 impl Scheduler {
-    fn spawn(&mut self, tag: String, f: fn(String) -> Box<dyn AnyActor + Send>) {
-        let actor = f(tag.clone());
-        self.actors.insert(tag, actor);
+    fn spawn(&mut self, tag: &str, f: fn(&str) -> Box<dyn AnyActor + Send>) {
+        let actor = f(tag);
+        self.actors.insert(tag.to_string(), actor);
     }
 }
 
@@ -276,9 +276,9 @@ struct PingPong {
 }
 
 impl PingPong {
-    fn new(tag: String) -> PingPong {
+    fn new(tag: &str) -> PingPong {
         PingPong {
-            tag,
+            tag: tag.to_string(),
             count: 0,
         }
     }
