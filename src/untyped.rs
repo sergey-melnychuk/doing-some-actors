@@ -255,7 +255,7 @@ impl AnyActor for Counter {
 
 trait AnySender {
     fn send(&mut self, address: &str, message: Envelope);
-    fn spawn(&mut self, address: &str, parent: &str, f: fn(String, String) -> Box<dyn AnyActor + Send>);
+    fn spawn(&mut self, address: &str, parent: &str, f: fn(&str, &str) -> Box<dyn AnyActor + Send>);
 }
 
 impl AnySender for Memory<Envelope> {
@@ -264,9 +264,9 @@ impl AnySender for Memory<Envelope> {
         self.map.entry(address.to_string()).or_default().push(message);
     }
 
-    fn spawn(&mut self, address: &str, parent: &str, f: fn(String, String) -> Box<dyn AnyActor + Send>) {
+    fn spawn(&mut self, address: &str, parent: &str, f: fn(&str, &str) -> Box<dyn AnyActor + Send>) {
         println!("request for spawning actor '{}' of parent '{}'", address, parent);
-        self.new.insert(address.to_string(), f(address.to_string(), parent.to_string()));
+        self.new.insert(address.to_string(), f(address, parent));
     }
 }
 
@@ -316,10 +316,10 @@ struct Child {
 }
 
 impl Child {
-    fn new(tag: String, up: String) -> Child {
+    fn new(tag: &str, up: &str) -> Child {
         Child {
-            tag,
-            up,
+            tag: tag.to_string(),
+            up: up.to_string(),
             sum: 0,
         }
     }
