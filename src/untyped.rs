@@ -6,7 +6,7 @@ use std::sync::mpsc::channel;
 use std::sync::{Mutex, Arc};
 
 pub fn run() {
-    threaded();
+    start();
 }
 
 fn example() {
@@ -79,13 +79,28 @@ enum Event {
 }
 
 enum Action {
-    Keep { tag: String, actor: Box<dyn AnyActor + Send> },
+    Return { tag: String, actor: Box<dyn AnyActor + Send> },
     Spawn { tag: String, actor: Box<dyn AnyActor + Send> },
     Queue { tag: String, queue: Vec<Envelope> },
 }
 
-fn threaded() {
+fn start() {
     let mut pool = ThreadPool::new(num_cpus::get());
+    let mut scheduler = Scheduler::default();
+
+    scheduler.spawn("root", |_| Box::new(Root::new()));
+    scheduler.spawn("ping", |tag| Box::new(PingPong::new(tag)));
+    scheduler.spawn("pong", |tag| Box::new(PingPong::new(tag)));
+
+    let tick = Envelope { message: Box::new(()), from: "root".to_string() };
+    scheduler.send("root", tick);
+    let ping = Envelope { message: Box::new("ping".to_string()), from: "pong".to_string() };
+    scheduler.send("ping", ping);
+
+    start_actor_runtime(pool, scheduler);
+}
+
+pub fn start_actor_runtime(mut pool: ThreadPool, mut scheduler: Scheduler) {
     let (events_tx, events_rx) = channel();
     let events_rx = Arc::new(Mutex::new(events_rx));
     let (actions_tx, actions_rx) = channel();
@@ -105,7 +120,7 @@ fn threaded() {
                             for envelope in queue.into_iter() {
                                 actor.receive(envelope, &mut memory);
                             }
-                            tx.send(Action::Keep { tag, actor }).unwrap();
+                            tx.send(Action::Return { tag, actor }).unwrap();
                         }
                     }
                     for (tag, actor) in memory.new.drain().into_iter() {
@@ -121,21 +136,20 @@ fn threaded() {
         });
     }
 
-    let tx = actions_tx.clone();
-    let tick = Envelope { message: Box::new(()), from: "root".to_string() };
-    tx.send(Action::Queue { tag: "root".to_string(), queue: vec![tick] }).unwrap();
-    let ping = Envelope { message: Box::new("ping".to_string()), from: "pong".to_string() };
-    tx.send(Action::Queue { tag: "ping".to_string(), queue: vec![ping] }).unwrap();
+    for (tag, queue) in scheduler.queue.drain() {
+        actions_tx.send(Action::Queue { tag, queue }).unwrap();
+    }
 
-    let mut scheduler = Scheduler::default();
-    scheduler.spawn("root", |_| Box::new(Root::new()));
-    scheduler.spawn("ping", |tag| Box::new(PingPong::new(tag)));
-    scheduler.spawn("pong", |tag| Box::new(PingPong::new(tag)));
     loop {
         let action = actions_rx.try_recv();
         if let Ok(x) = action {
             match x {
-                Action::Keep { tag, actor } => {
+                Action::Return { tag, mut actor } => {
+                    //println!("return of '{}'", tag);
+                    let queue = scheduler.queue.remove(&tag).unwrap_or_default();
+                    if !queue.is_empty() {
+                        actions_tx.send(Action::Queue { tag: tag.clone(), queue }).unwrap();
+                    }
                     scheduler.actors.insert(tag, actor);
                 },
                 Action::Spawn { tag, actor } => {
@@ -147,7 +161,12 @@ fn threaded() {
                             let event = Event::Mail { tag, actor, queue };
                             events_tx.send(event).unwrap();
                         },
-                        None => println!("queue is ready ({} envelopes) but actor '{}' is missing", queue.len(), tag)
+                        None => {
+                            let mut q = scheduler.queue.entry(tag.clone()).or_default();
+                            for e in queue {
+                                q.push(e);
+                            }
+                        }
                     }
                 }
             }
@@ -189,8 +208,8 @@ fn is_string(s: &dyn Any) -> bool {
 
 #[derive(Debug)]
 pub struct Envelope {
-    message: Box<dyn Any + Send>,
-    from: String,
+    pub message: Box<dyn Any + Send>,
+    pub from: String,
 }
 
 struct Memory<T: Any + Sized + Send> {
@@ -217,6 +236,9 @@ impl Scheduler {
     pub fn spawn(&mut self, tag: &str, f: fn(&str) -> Box<dyn AnyActor + Send>) {
         let actor = f(tag);
         self.actors.insert(tag.to_string(), actor);
+    }
+    pub fn send(&mut self, tag: &str, envelope: Envelope) {
+        self.queue.entry(tag.to_string()).or_default().push(envelope);
     }
 }
 
@@ -260,7 +282,7 @@ pub trait AnySender {
 
 impl AnySender for Memory<Envelope> {
     fn send(&mut self, address: &str, message: Envelope) {
-        println!("sending any '{:?}' to address '{}'", message, address);
+        println!("sending message from '{}' to '{}'", message.from, address);
         self.map.entry(address.to_string()).or_default().push(message);
     }
 
