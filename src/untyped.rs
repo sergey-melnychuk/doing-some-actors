@@ -141,7 +141,7 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool) {
         actions_tx.send(Action::Queue { tag, queue }).unwrap();
     }
 
-    let mut epoch: usize = 0;
+    let mut tick: usize = 0;
     let mut messages: usize = 0;
     let mut start = Instant::now();
     loop {
@@ -176,10 +176,12 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool) {
                 }
             }
         }
-        epoch += 1;
-        if epoch % 10000 == 0 {
-            let elapsed = start.elapsed();
-            println!("counter={} messages={} elapsed: {} ms", epoch, messages, elapsed.as_millis());
+        tick += 1;
+        if tick % 1000000 == 0 {
+            if messages > 0 {
+                let elapsed = start.elapsed();
+                println!("tick={}M messages={} elapsed: {} ms", tick / 1000000, messages, elapsed.as_millis());
+            }
             start = Instant::now();
             messages = 0;
         }
