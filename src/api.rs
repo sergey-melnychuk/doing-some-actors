@@ -40,12 +40,12 @@ impl AnyActor for Round {
             sender.send(&tag, envelope);
         } else if let Some(acc) = envelope.message.downcast_ref::<Acc>() {
             //println!("tag:'{}' acc: name='{}' hits={}", self.tag, acc.name, acc.hits);
-            let nxt = Acc{ name: acc.name.clone(), hits: acc.hits + 1 };
-            for id in 0..self.size {
-                let tag = format!("{}", id);
-                let env = Envelope { message: Box::new(nxt.clone()), from: self.tag.clone() };
-                sender.send(&tag, env)
-            }
+            let mut rng = rand::thread_rng();
+            let next = rng.gen_range(0, self.size);
+            let tag = format!("{}", next);
+            let m = Acc { name: acc.name.clone(), hits: acc.hits + 1 };
+            let env = Envelope { message: Box::new(m), from: self.tag.clone() };
+            sender.send(&tag, env)
         } else {
             println!("unexpected message: {:?}", envelope.message.type_id());
         }
@@ -62,14 +62,15 @@ fn peers(size: u32) -> HashSet<String> {
 }
 
 pub fn run() {
-    let mut scheduler = Scheduler::default();
+    const SIZE: u32 = 1000000;
 
-    const SIZE: u32 = 10;
+    let mut scheduler = Scheduler::default();
+    scheduler.send("0", Envelope { message: Box::new(Hit(0)), from: String::default() });
+
     for id in 0..SIZE {
         let tag = format!("{}", id);
         scheduler.spawn(&tag, |tag| Box::new(Round::new(tag, SIZE)));
     }
-    scheduler.send("0", Envelope { message: Box::new(Hit(0)), from: String::default() });
 
     for id in 0..SIZE {
         let tag = format!("{}", id);
@@ -78,5 +79,5 @@ pub fn run() {
     }
 
     let mut pool = ThreadPool::new(num_cpus::get());
-    start_actor_runtime(pool, scheduler);
+    start_actor_runtime(scheduler, pool);
 }

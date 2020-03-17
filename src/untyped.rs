@@ -98,10 +98,10 @@ fn start() {
     let ping = Envelope { message: Box::new("ping".to_string()), from: "pong".to_string() };
     scheduler.send("ping", ping);
 
-    start_actor_runtime(pool, scheduler);
+    start_actor_runtime(scheduler, pool);
 }
 
-pub fn start_actor_runtime(mut pool: ThreadPool, mut scheduler: Scheduler) {
+pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool) {
     let (events_tx, events_rx) = channel();
     let events_rx = Arc::new(Mutex::new(events_rx));
     let (actions_tx, actions_rx) = channel();
