@@ -6,4 +6,3 @@ edition = "2018"
 
 [dependencies]
 num_cpus = "1.12.0"
-rand = "0.7.3"

@@ -1,6 +1,3 @@
-extern crate rand;
-
-use rand::Rng;
 use std::collections::HashSet;
 use crate::untyped::{Scheduler, AnyActor, Envelope, AnySender, start_actor_runtime};
 use crate::pool::ThreadPool;
@@ -32,18 +29,23 @@ struct Acc {
 impl AnyActor for Round {
     fn receive(&mut self, envelope: Envelope, sender: &mut dyn AnySender) {
         if let Some(hit) = envelope.message.downcast_ref::<Hit>() {
-            let mut rng = rand::thread_rng();
-            let next = rng.gen_range(0, self.size);
+            if hit.0 == 0 {
+                println!("hit went around");
+            }
+            let next = if hit.0 + 1 == self.size as usize { 0 } else { hit.0 + 1 };
             let tag = format!("{}", next);
             //println!("tag:'{}' hit:{} next:'{}'", self.tag, hit.0, tag);
-            let envelope = Envelope { message: Box::new(Hit(hit.0 + 1)), from: self.tag.clone() };
+            let m = Hit(next);
+            let envelope = Envelope { message: Box::new(m), from: self.tag.clone() };
             sender.send(&tag, envelope);
         } else if let Some(acc) = envelope.message.downcast_ref::<Acc>() {
-            //println!("tag:'{}' acc: name='{}' hits={}", self.tag, acc.name, acc.hits);
-            let mut rng = rand::thread_rng();
-            let next = rng.gen_range(0, self.size);
+            if acc.name == self.tag {
+                println!("acc '{}' went around", acc.name);
+            }
+            let next = if acc.hits + 1 == self.size as usize { 0 } else { acc.hits + 1 };
             let tag = format!("{}", next);
-            let m = Acc { name: acc.name.clone(), hits: acc.hits + 1 };
+            //println!("tag:'{}' acc: name='{}' hits={}", self.tag, acc.name, acc.hits);
+            let m = Acc { name: acc.name.clone(), hits: next };
             let env = Envelope { message: Box::new(m), from: self.tag.clone() };
             sender.send(&tag, env)
         } else {
