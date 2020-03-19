@@ -4,12 +4,12 @@ use crate::pool::ThreadPool;
 
 struct Round {
     tag: String,
-    size: u32,
+    size: usize,
     hits: usize,
 }
 
 impl Round {
-    fn new(tag: &str, size: u32) -> Round {
+    fn new(tag: &str, size: usize) -> Round {
         Round {
             tag: tag.to_string(),
             size,
@@ -23,29 +23,30 @@ struct Hit(usize);
 #[derive(Clone)]
 struct Acc {
     name: String,
+    zero: usize,
     hits: usize,
 }
 
 impl AnyActor for Round {
     fn receive(&mut self, envelope: Envelope, sender: &mut dyn AnySender) {
         if let Some(hit) = envelope.message.downcast_ref::<Hit>() {
-            if hit.0 == 0 {
-                println!("hit went around");
+            if hit.0 > 0 && hit.0 % self.size == 0 {
+                println!("the hit went around: hits={}", hit.0);
             }
-            let next = if hit.0 + 1 == self.size as usize { 0 } else { hit.0 + 1 };
+            let next = (hit.0 + 1) % self.size;
             let tag = format!("{}", next);
-            //println!("tag:'{}' hit:{} next:'{}'", self.tag, hit.0, tag);
-            let m = Hit(next);
+            //println!("tag:{} hits={} next={}", self.tag, hit.0, tag);
+            let m = Hit(hit.0 + 1);
             let envelope = Envelope { message: Box::new(m), from: self.tag.clone() };
             sender.send(&tag, envelope);
         } else if let Some(acc) = envelope.message.downcast_ref::<Acc>() {
-            if acc.name == self.tag {
-                println!("acc '{}' went around", acc.name);
+            if acc.name == self.tag && acc.hits > 0 {
+                println!("acc '{}' went around: hits={}", acc.name, acc.hits);
             }
-            let next = if acc.hits + 1 == self.size as usize { 0 } else { acc.hits + 1 };
+            let next = (acc.zero + acc.hits + 1) % self.size;
             let tag = format!("{}", next);
-            //println!("tag:'{}' acc: name='{}' hits={}", self.tag, acc.name, acc.hits);
-            let m = Acc { name: acc.name.clone(), hits: next };
+            //println!("tag:{} [acc] name={} hits={} next={}", self.tag, acc.name, acc.hits, next);
+            let m = Acc { name: acc.name.clone(), zero: acc.zero, hits: acc.hits + 1 };
             let env = Envelope { message: Box::new(m), from: self.tag.clone() };
             sender.send(&tag, env)
         } else {
@@ -64,19 +65,20 @@ fn peers(size: u32) -> HashSet<String> {
 }
 
 pub fn run() {
-    const SIZE: u32 = 1000000;
+    const SIZE: usize = 100000;
 
     let mut scheduler = Scheduler::default();
-    scheduler.send("0", Envelope { message: Box::new(Hit(0)), from: String::default() });
 
     for id in 0..SIZE {
         let tag = format!("{}", id);
         scheduler.spawn(&tag, |tag| Box::new(Round::new(tag, SIZE)));
     }
 
-    for id in 0..SIZE {
+    scheduler.send("0", Envelope { message: Box::new(Hit(0)), from: String::default() });
+    for id in 0..1000 {
         let tag = format!("{}", id);
-        let env = Envelope { message: Box::new(Acc { name: tag.clone(), hits: 0 }), from: tag.clone() };
+        let acc = Acc { name: tag.clone(), zero: id, hits: 0 };
+        let env = Envelope { message: Box::new(acc), from: tag.clone() };
         scheduler.send(&tag, env);
     }
 
