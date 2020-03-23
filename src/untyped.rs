@@ -86,7 +86,6 @@ enum Action {
 }
 
 fn start() {
-    let mut pool = ThreadPool::new(num_cpus::get());
     let mut scheduler = Scheduler::default();
 
     scheduler.spawn("root", |_| Box::new(Root::new()));
@@ -98,6 +97,7 @@ fn start() {
     let ping = Envelope { message: Box::new("ping".to_string()), from: "pong".to_string() };
     scheduler.send("ping", ping);
 
+    let pool = ThreadPool::new(num_cpus::get());
     start_actor_runtime(scheduler, pool);
 }
 
@@ -148,7 +148,7 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool) {
         let action = actions_rx.try_recv();
         if let Ok(x) = action {
             match x {
-                Action::Return { tag, mut actor } => {
+                Action::Return { tag, actor } => {
                     //println!("return of '{}'", tag);
                     let queue = scheduler.queue.remove(&tag).unwrap_or_default();
                     if !queue.is_empty() {
@@ -206,7 +206,7 @@ impl Root {
 }
 
 impl AnyActor for Root {
-    fn receive(&mut self, mut envelope: Envelope, sender: &mut dyn AnySender) {
+    fn receive(&mut self, envelope: Envelope, sender: &mut dyn AnySender) {
         if self.tick() {
             // effectively this is an infinite loop
             sender.send("root", envelope);

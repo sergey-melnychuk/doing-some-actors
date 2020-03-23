@@ -27,6 +27,60 @@ struct Acc {
     hits: usize,
 }
 
+enum Fan {
+    Trigger { size: usize },
+    Out { id: usize },
+    In { id: usize },
+}
+
+struct Root {
+    tag: String,
+    size: usize,
+    count: usize,
+    seen: HashSet<usize>,
+}
+
+impl Root {
+    fn new(tag: &str) -> Root {
+        Root {
+            tag: tag.to_string(),
+            size: 0,
+            count: 0,
+            seen: HashSet::new(),
+        }
+    }
+}
+
+impl AnyActor for Root {
+    fn receive(&mut self, envelope: Envelope, sender: &mut dyn AnySender) {
+        if let Some(fan) = envelope.message.downcast_ref::<Fan>() {
+            match fan {
+                Fan::Trigger { size } => {
+                    self.size = *size;
+                    for id in 0..self.size {
+                        let tag = format!("{}", id);
+                        let env = Envelope { message: Box::new(Fan::Out { id }), from: self.tag.clone() };
+                        sender.send(&tag, env)
+                    }
+                },
+                Fan::In { id } => {
+                    self.seen.insert(*id);
+                    self.count += 1;
+                    if self.count == self.size {
+                        self.seen.clear();
+                        self.count = 0;
+                        println!("root completed the fanout of size: {}", self.size);
+                        let trigger = Box::new(Fan::Trigger { size: self.size });
+                        let env = Envelope { message: trigger, from: self.tag.clone() };
+                        sender.send(&self.tag, env);
+                    }
+                },
+                _ => ()
+            }
+        }
+    }
+}
+
 impl AnyActor for Round {
     fn receive(&mut self, envelope: Envelope, sender: &mut dyn AnySender) {
         if let Some(hit) = envelope.message.downcast_ref::<Hit>() {
@@ -49,6 +103,9 @@ impl AnyActor for Round {
             let m = Acc { name: acc.name.clone(), zero: acc.zero, hits: acc.hits + 1 };
             let env = Envelope { message: Box::new(m), from: self.tag.clone() };
             sender.send(&tag, env)
+        } else if let Some(Fan::Out { id }) = envelope.message.downcast_ref::<Fan>() {
+            let env = Envelope { message: Box::new(Fan::In { id: *id }), from: self.tag.clone() };
+            sender.send(&envelope.from, env);
         } else {
             println!("unexpected message: {:?}", envelope.message.type_id());
         }
@@ -82,6 +139,10 @@ pub fn run() {
         scheduler.send(&tag, env);
     }
 
-    let mut pool = ThreadPool::new(num_cpus::get());
+    scheduler.spawn("root", |tag| Box::new(Root::new(tag)));
+    let trigger = Envelope { message: Box::new(Fan::Trigger { size: SIZE }), from: "root".to_string() };
+    scheduler.send("root", trigger);
+
+    let pool = ThreadPool::new(num_cpus::get());
     start_actor_runtime(scheduler, pool);
 }
