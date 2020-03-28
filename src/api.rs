@@ -160,9 +160,11 @@ pub fn run() {
         scheduler.send(&tag, env);
     }
 
-    scheduler.spawn("root", |tag| Box::new(Root::new(tag)));
-    let trigger = Envelope { message: Box::new(Fan::Trigger { size: SIZE }), from: "root".to_string() };
-    scheduler.send("root", trigger);
+    // TODO FIXME Address "hot-spot" actors ('root' receiving lots of Fan::In{} messages)
+    // (Possible approach: introduce 'throughput', max number of messages one actor can handle in one go.)
+    // scheduler.spawn("root", |tag| Box::new(Root::new(tag)));
+    // let trigger = Envelope { message: Box::new(Fan::Trigger { size: SIZE }), from: "root".to_string() };
+    // scheduler.send("root", trigger);
 
     scheduler.spawn("timer", |tag| Box::new(Periodic::new(tag)));
     let tick = Envelope { message: Box::new(Tick { at: Instant::now() }), from: "timer".to_string() };
