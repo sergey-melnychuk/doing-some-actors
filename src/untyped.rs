@@ -1,10 +1,12 @@
 use std::any::{Any, TypeId};
-use std::collections::HashMap;
+use std::collections::{HashMap, BinaryHeap};
 
 use crate::pool::ThreadPool;
 use std::sync::mpsc::channel;
 use std::sync::{Mutex, Arc};
-use std::time::Instant;
+use std::time::{Instant, Duration};
+use std::cmp::Ordering;
+use std::ops::Add;
 
 pub fn run() {
     start();
@@ -83,6 +85,36 @@ enum Action {
     Return { tag: String, actor: Box<dyn AnyActor + Send> },
     Spawn { tag: String, actor: Box<dyn AnyActor + Send> },
     Queue { tag: String, queue: Vec<Envelope> },
+    Delay { entry: Entry },
+}
+
+struct Entry {
+    at: Instant,
+    tag: String,
+    envelope: Envelope,
+}
+
+impl Eq for Entry {}
+
+impl PartialEq for Entry {
+    fn eq(&self, other: &Self) -> bool {
+        (self.tag == other.tag) &&
+            (self.at == other.at) &&
+            (self.envelope.from == other.envelope.from) &&
+            (self.envelope.message.type_id() == other.envelope.message.type_id())
+    }
+}
+
+impl Ord for Entry {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.cmp(other)
+    }
+}
+
+impl PartialOrd for Entry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.at.cmp(&other.at))
+    }
 }
 
 fn start() {
@@ -132,6 +164,10 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool) {
                         let action = Action::Queue { tag, queue };
                         tx.send(action).unwrap();
                     }
+                    for entry in memory.delay.drain(..).into_iter() {
+                        let action = Action::Delay { entry };
+                        tx.send(action).unwrap();
+                    }
                 }
             }
         });
@@ -156,9 +192,6 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool) {
                     }
                     scheduler.actors.insert(tag, actor);
                 },
-                Action::Spawn { tag, actor } => {
-                    scheduler.actors.insert(tag, actor);
-                },
                 Action::Queue { tag, queue } => {
                     messages += queue.len();
                     match scheduler.actors.remove(&tag) {
@@ -173,9 +206,24 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool) {
                             }
                         }
                     }
+                },
+                Action::Spawn { tag, actor } => {
+                    scheduler.actors.insert(tag, actor);
+                },
+                Action::Delay { entry } => {
+                    scheduler.tasks.push(entry);
                 }
             }
         }
+
+        let now = Instant::now();
+        while scheduler.tasks.peek().map(|e| e.at <= now).unwrap_or_default() {
+            if let Some(Entry { at, tag, envelope }) = scheduler.tasks.pop() {
+                let action = Action::Queue { tag, queue: vec![envelope] };
+                actions_tx.send(action).unwrap();
+            }
+        }
+
         tick += 1;
         if tick % 1000000 == 0 {
             if messages > 0 {
@@ -229,6 +277,7 @@ pub struct Envelope {
 struct Memory<T: Any + Sized + Send> {
     map: HashMap<String, Vec<T>>,
     new: HashMap<String, Box<dyn AnyActor + Send>>,
+    delay: Vec<Entry>,
 }
 
 impl<T: Any + Sized + Send> Memory<T> {
@@ -236,6 +285,7 @@ impl<T: Any + Sized + Send> Memory<T> {
         Memory {
             map: HashMap::new(),
             new: HashMap::new(),
+            delay: Vec::new(),
         }
     }
 }
@@ -244,6 +294,7 @@ impl<T: Any + Sized + Send> Memory<T> {
 pub struct Scheduler {
     actors: HashMap<String, Box<dyn AnyActor + Send>>,
     queue: HashMap<String, Vec<Envelope>>,
+    tasks: BinaryHeap<Entry>,
 }
 
 impl Scheduler {
@@ -292,6 +343,7 @@ impl AnyActor for Counter {
 pub trait AnySender {
     fn send(&mut self, address: &str, message: Envelope);
     fn spawn(&mut self, address: &str, parent: &str, f: fn(&str, &str) -> Box<dyn AnyActor + Send>);
+    fn delay(&mut self, address: &str, envelope: Envelope, duration: Duration);
 }
 
 impl AnySender for Memory<Envelope> {
@@ -303,6 +355,10 @@ impl AnySender for Memory<Envelope> {
     fn spawn(&mut self, address: &str, parent: &str, f: fn(&str, &str) -> Box<dyn AnyActor + Send>) {
         println!("request for spawning actor '{}' of parent '{}'", address, parent);
         self.new.insert(address.to_string(), f(address, parent));
+    }
+
+    fn delay(&mut self, address: &str, envelope: Envelope, duration: Duration) {
+        self.delay.push(Entry { at: Instant::now().add(duration), tag: address.to_string(), envelope });
     }
 }
 
