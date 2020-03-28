@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use crate::untyped::{Scheduler, AnyActor, Envelope, AnySender, start_actor_runtime};
 use crate::pool::ThreadPool;
+use std::time::{Instant, Duration};
 
 struct Round {
     tag: String,
@@ -112,13 +113,33 @@ impl AnyActor for Round {
     }
 }
 
-fn peers(size: u32) -> HashSet<String> {
-    let mut peers = HashSet::with_capacity(size as usize);
-    for id in 0..size {
-        let tag = format!("{}", id);
-        peers.insert(tag);
+struct Periodic {
+    tag: String,
+    at: Instant,
+}
+
+impl Periodic {
+    fn new(tag: &str) -> Periodic {
+        Periodic {
+            tag: tag.to_string(),
+            at: Instant::now()
+        }
     }
-    peers
+}
+
+struct Tick {
+    at: Instant,
+}
+
+impl AnyActor for Periodic {
+    fn receive(&mut self, envelope: Envelope, sender: &mut AnySender) {
+        self.at = Instant::now();
+        if let Some(Tick { at }) = envelope.message.downcast_ref::<Tick>() {
+            println!("periodic: {}", self.at.duration_since(*at).as_millis());
+        }
+        let e = Envelope { message: Box::new(Tick { at: self.at }), from: self.tag.to_string() };
+        sender.delay(&self.tag, e, Duration::from_millis(2000));
+    }
 }
 
 pub fn run() {
@@ -142,6 +163,10 @@ pub fn run() {
     scheduler.spawn("root", |tag| Box::new(Root::new(tag)));
     let trigger = Envelope { message: Box::new(Fan::Trigger { size: SIZE }), from: "root".to_string() };
     scheduler.send("root", trigger);
+
+    scheduler.spawn("timer", |tag| Box::new(Periodic::new(tag)));
+    let tick = Envelope { message: Box::new(Tick { at: Instant::now() }), from: "timer".to_string() };
+    scheduler.send("timer", tick);
 
     let pool = ThreadPool::new(num_cpus::get());
     start_actor_runtime(scheduler, pool);
