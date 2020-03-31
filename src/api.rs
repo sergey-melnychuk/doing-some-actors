@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use crate::untyped::{Scheduler, AnyActor, Envelope, AnySender, start_actor_runtime};
 use crate::pool::ThreadPool;
 use std::time::{Instant, Duration};
@@ -116,13 +116,17 @@ impl AnyActor for Round {
 struct Periodic {
     tag: String,
     at: Instant,
+    timings: HashMap<usize, usize>,
+    counter: usize,
 }
 
 impl Periodic {
     fn new(tag: &str) -> Periodic {
         Periodic {
             tag: tag.to_string(),
-            at: Instant::now()
+            at: Instant::now(),
+            timings: HashMap::new(),
+            counter: 0,
         }
     }
 }
@@ -133,12 +137,31 @@ struct Tick {
 
 impl AnyActor for Periodic {
     fn receive(&mut self, envelope: Envelope, sender: &mut AnySender) {
-        self.at = Instant::now();
         if let Some(Tick { at }) = envelope.message.downcast_ref::<Tick>() {
-            println!("periodic: {}", self.at.duration_since(*at).as_millis());
+            self.at = Instant::now();
+            let d = self.at.duration_since(*at).as_millis() as usize;
+            if let Some(n) = self.timings.get_mut(&d) {
+                *n += 1;
+            } else {
+                self.timings.insert(d, 1);
+            }
+            self.counter += 1;
+            if self.counter % 1000 == 0 {
+                let mut total: usize = self.timings.values().sum();
+                let mut ds = self.timings.keys().into_iter().collect::<Vec<&usize>>();
+                let mut sum: usize = 0;
+                ds.sort();
+                println!("timer latencies:");
+                for d in ds {
+                    let n = self.timings.get(d).unwrap();
+                    sum += *n;
+                    println!("\t{} ms\t: {}\t{}/{}", *d, *n, sum, total);
+                }
+                self.timings.clear();
+            }
+            let e = Envelope { message: Box::new(Tick { at: Instant::now() }), from: self.tag.to_string() };
+            sender.delay(&self.tag, e, Duration::from_millis(10));
         }
-        let e = Envelope { message: Box::new(Tick { at: self.at }), from: self.tag.to_string() };
-        sender.delay(&self.tag, e, Duration::from_millis(2000));
     }
 }
 
@@ -160,16 +183,15 @@ pub fn run() {
         scheduler.send(&tag, env);
     }
 
-    // TODO FIXME Address "hot-spot" actors ('root' receiving lots of Fan::In{} messages)
-    // (Possible approach: introduce 'throughput', max number of messages one actor can handle in one go.)
-    // scheduler.spawn("root", |tag| Box::new(Root::new(tag)));
-    // let trigger = Envelope { message: Box::new(Fan::Trigger { size: SIZE }), from: "root".to_string() };
-    // scheduler.send("root", trigger);
+    scheduler.spawn("root", |tag| Box::new(Root::new(tag)));
+    let trigger = Envelope { message: Box::new(Fan::Trigger { size: SIZE }), from: "root".to_string() };
+    scheduler.send("root", trigger);
 
     scheduler.spawn("timer", |tag| Box::new(Periodic::new(tag)));
     let tick = Envelope { message: Box::new(Tick { at: Instant::now() }), from: "timer".to_string() };
     scheduler.send("timer", tick);
 
-    let pool = ThreadPool::new(num_cpus::get());
+    let threads = num_cpus::get() - 1; // leave one thread for main loop
+    let pool = ThreadPool::new(threads);
     start_actor_runtime(scheduler, pool);
 }
