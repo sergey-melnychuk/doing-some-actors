@@ -38,6 +38,7 @@ struct Root {
     tag: String,
     size: usize,
     count: usize,
+    epoch: usize,
     seen: HashSet<usize>,
 }
 
@@ -47,6 +48,7 @@ impl Root {
             tag: tag.to_string(),
             size: 0,
             count: 0,
+            epoch: 0,
             seen: HashSet::new(),
         }
     }
@@ -70,10 +72,11 @@ impl AnyActor for Root {
                     if self.count == self.size {
                         self.seen.clear();
                         self.count = 0;
-                        println!("root completed the fanout of size: {}", self.size);
+                        println!("root completed the fanout of size: {} (epoch: {})", self.size, self.epoch);
                         let trigger = Box::new(Fan::Trigger { size: self.size });
                         let env = Envelope { message: trigger, from: self.tag.clone() };
                         sender.send(&self.tag, env);
+                        self.epoch += 1;
                     }
                 },
                 _ => ()
@@ -191,7 +194,6 @@ pub fn run() {
     let tick = Envelope { message: Box::new(Tick { at: Instant::now() }), from: "timer".to_string() };
     scheduler.send("timer", tick);
 
-    let threads = num_cpus::get() - 1; // leave one thread for main loop
-    let pool = ThreadPool::new(threads);
+    let pool = ThreadPool::new(4);
     start_actor_runtime(scheduler, pool);
 }
