@@ -134,7 +134,7 @@ fn start() {
 }
 
 pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool) {
-    const THROUGHPUT: usize = 5;
+    const THROUGHPUT: usize = 1;
 
     let (events_tx, events_rx) = channel();
     let events_rx = Arc::new(Mutex::new(events_rx));
