@@ -6,3 +6,4 @@ edition = "2018"
 
 [dependencies]
 num_cpus = "1.12.0"
+core_affinity = "0.5.10"

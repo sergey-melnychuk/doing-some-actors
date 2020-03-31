@@ -2,6 +2,9 @@ use std::sync::mpsc::{channel, Sender, Receiver};
 use std::thread;
 use std::thread::JoinHandle;
 use std::sync::{Arc, Mutex};
+use self::core_affinity::CoreId;
+
+extern crate core_affinity;
 
 type Runnable = Box<dyn FnOnce() + Send + 'static>;
 
@@ -22,8 +25,14 @@ impl ThreadPool {
 
         let mut workers = Vec::with_capacity(size);
 
-        for _ in 0..size {
-            let worker = Worker::new(Arc::clone(&receiver));
+        let core_ids = core_affinity::get_core_ids().unwrap();
+        for idx in 0..size {
+            let core_id = if idx < core_ids.len() {
+                Some(core_ids.get(idx).unwrap().to_owned())
+            } else {
+                None
+            };
+            let worker = Worker::new(Arc::clone(&receiver), core_id);
             workers.push(worker);
         }
 
@@ -65,8 +74,11 @@ struct Worker {
 }
 
 impl Worker {
-    fn new(receiver: Arc<Mutex<Receiver<Job>>>) -> Worker {
+    fn new(receiver: Arc<Mutex<Receiver<Job>>>, core_id: Option<CoreId>) -> Worker {
         let thread = thread::spawn(move || {
+            if let Some(id) = core_id {
+                core_affinity::set_for_current(id);
+            }
             loop {
                 let job = receiver.lock().unwrap().recv();
                 match job {
