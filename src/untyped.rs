@@ -6,7 +6,7 @@ use std::sync::mpsc::channel;
 use std::sync::{Mutex, Arc};
 use std::time::{Instant, Duration};
 use std::cmp::Ordering;
-use std::ops::Add;
+use std::ops::{Add, Sub};
 
 pub fn run() {
     start();
@@ -134,6 +134,8 @@ fn start() {
 }
 
 pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool) {
+    const THROUGHPUT: usize = 5;
+
     let (events_tx, events_rx) = channel();
     let events_rx = Arc::new(Mutex::new(events_rx));
     let (actions_tx, actions_rx) = channel();
@@ -148,8 +150,12 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool) {
                 let event = rx.lock().unwrap().try_recv();
                 if let Ok(x) = event {
                     match x {
-                        Event::Mail { tag, mut actor, queue } => {
+                        Event::Mail { tag, mut actor, mut queue } => {
                             //println!("[thread-{}] event.mail for tag '{}': {} messages", id, tag, queue.len());
+                            if queue.len() > THROUGHPUT {
+                                let remaining = queue.split_off(THROUGHPUT);
+                                tx.send(Action::Queue { tag: tag.clone(), queue: remaining }).unwrap();
+                            }
                             for envelope in queue.into_iter() {
                                 actor.receive(envelope, &mut memory);
                             }
@@ -186,8 +192,12 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool) {
             match x {
                 Action::Return { tag, actor } => {
                     //println!("return of '{}'", tag);
-                    let queue = scheduler.queue.remove(&tag).unwrap_or_default();
+                    let mut queue = scheduler.queue.remove(&tag).unwrap_or_default();
                     if !queue.is_empty() {
+                        if queue.len() > THROUGHPUT {
+                            let remaining = queue.split_off(THROUGHPUT);
+                            scheduler.queue.insert(tag.clone(), remaining);
+                        }
                         actions_tx.send(Action::Queue { tag: tag.clone(), queue }).unwrap();
                     }
                     scheduler.actors.insert(tag, actor);
@@ -216,7 +226,9 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool) {
             }
         }
 
-        let now = Instant::now();
+        // TODO Collect statistic about running time of this loop to estimate `precision`
+        let precision = Duration::from_millis(1);
+        let now = Instant::now().add(precision);
         while scheduler.tasks.peek().map(|e| e.at <= now).unwrap_or_default() {
             if let Some(Entry { at, tag, envelope }) = scheduler.tasks.pop() {
                 let action = Action::Queue { tag, queue: vec![envelope] };
@@ -227,8 +239,10 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool) {
         tick += 1;
         if tick % 1000000 == 0 {
             if messages > 0 {
-                let elapsed = start.elapsed();
-                println!("tick={}M messages={} elapsed: {} ms", tick / 1000000, messages, elapsed.as_millis());
+                let elapsed = start.elapsed().as_millis() as usize;
+                let rate = (messages as f64 / (elapsed as f64 / 1000.0)) as usize;
+                println!("tick={}M messages={} elapsed: {} ms | rate = {} mps",
+                         tick / 1000000, messages, elapsed, rate);
             }
             start = Instant::now();
             messages = 0;
