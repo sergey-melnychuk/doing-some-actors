@@ -1,6 +1,6 @@
-use std::any::{Any, TypeId};
-use std::collections::HashMap;
+use std::any::Any;
 use std::fmt::Debug;
+use std::collections::HashMap;
 
 pub fn run() {
     let mut sender = Memory::new();
@@ -45,21 +45,12 @@ struct Output;
 
 impl<Q: Any + Sized + Debug> Actor<Q, String> for Output {
     fn receive(&mut self, message: Q, sender: &mut dyn Sender<String>) {
-        println!("Received '{:?}' by Output", message);
-
-        let msg = &message as &dyn Any;
-        if is_string(msg) {
-            if let Some(s) = msg.downcast_ref::<String>() {
-                println!("Matched String from Any: '{}'", s);
-                let response = "sup?".to_string();
-                sender.send("addr", response);
-            }
+        println!("Received by Output: message of type '{}'", std::any::type_name::<Q>());
+        if let Some(s) = (&message as &dyn Any).downcast_ref::<String>() {
+            println!("Matched String from Any: '{}'", s);
+            sender.send("addr", "sup?".to_string());
         }
     }
-}
-
-fn is_string(s: &dyn Any) -> bool {
-    TypeId::of::<String>() == s.type_id()
 }
 
 struct System<Q: Any + Sized, R: Any + Sized> {
