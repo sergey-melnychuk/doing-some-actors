@@ -139,7 +139,7 @@ struct Tick {
 }
 
 impl AnyActor for Periodic {
-    fn receive(&mut self, envelope: Envelope, sender: &mut AnySender) {
+    fn receive(&mut self, envelope: Envelope, sender: &mut dyn AnySender) {
         if let Some(Tick { at }) = envelope.message.downcast_ref::<Tick>() {
             self.at = Instant::now();
             let d = self.at.duration_since(*at).as_millis() as usize;
@@ -194,6 +194,6 @@ pub fn run() {
     let tick = Envelope { message: Box::new(Tick { at: Instant::now() }), from: "timer".to_string() };
     scheduler.send("timer", tick);
 
-    let pool = ThreadPool::new(4);
+    let pool = ThreadPool::new(std::cmp::max(5, num_cpus::get()));
     start_actor_runtime(scheduler, pool);
 }
