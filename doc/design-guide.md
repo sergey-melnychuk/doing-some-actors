@@ -1,6 +1,127 @@
 ### Design
 
-https://en.wikipedia.org/wiki/Actor_model
+#### Introduction
 
-Hewitt, Carl; Bishop, Peter; Steiger, Richard (1973). "A Universal Modular Actor Formalism for Artificial Intelligence". IJCAI.
-https://www.ijcai.org/Proceedings/73/Papers/027B.pdf
+This document introduces basic concepts and design decisions behind standalone 
+actor model implementation in Rust.
+
+#### Core concepts
+
+Message passing is the way we humans communicate everywhere, and it is pretty much 
+the only possible way of communication that scales from individuals to nations or 
+even whole World.
+
+One of the institutions that has message passing as its core is a Post Office. 
+Model and abstractions used in this document are very similar, like messages 
+and envelopes.
+
+Fundamental entities are:
+- Address - logical point where Envelop can be delivered
+- Envelope - a container to hold:
+  - Message content
+    - no restrictions apply on message content
+  - Address of the sender of the Message
+- Actor - a reactive (passive) entity that can:
+  - have a known Address
+  - when receive an Envelope:
+    - access or change own internal state
+    - create (spawn) new Actors
+    - send Envelope to a known Address
+
+Important comments:
+- Envelop makes no restrictions on Message content
+  - Post Office: anyone can send anything to a known Address
+  - This means that generic Actor can receive anything
+  - Which in turn means that such Actor cannot be type-safe!
+    - So type assertions on received Message is part of Actor's internal behavior
+
+Each Actor holds its state internally, thus there is no direct way to access 
+other's Actor internal state. This leaves message passing as the only way for 
+Actors to interact with each other and with the Environment.
+
+Actor is reactive (passive) by nature, it can only "act" when asked by the 
+Environment to process the Envelope.
+
+Actor and Address are absolutely independent and do not rely on each other. 
+The Environment is responsible for binding an Actor under specific Address, 
+and thus enforcing all Envelopes sent to a given Address to be received by
+specific Actor, bound to that specific Address. The Environment is also 
+responsible for letting the Actor know under which address it was bound.
+
+Until an Actor is bound under specific Address, it cannot receive any messages -
+thus cannot perform any action, so it is not distinguishable if such Actor even 
+exists, as the only way to check it would be to send an Envelope to an Address.
+As long as the Environment is responsible for such binding, Actor can only be
+created inside the Environment, which makes the Environment owner of all Actors!
+
+In order to perform any task, the Environment must provide a way to send an
+Envelope to an Address from the outside - otherwise no single Actor can ever act, 
+as in order to act, an Envelope must be received first. In order to be received, 
+an Envelope then must be sent first!
+
+With provided ways of (1) spawning an actor in a declarative manner (as actors can
+be created only inside the Environment, not outside) under given Address and (2)
+sending an Envelope to a given Address, it must be possible to define initial 
+configuration of the Environment: set of Actor blueprints and initial set of 
+Envelopes to be sent to respective Addresses.
+
+After that, what's left is to somehow start the Environment (actor runtime), and 
+allow it to have access to required resources. If failed to start, the initial
+configuration remains static, thus can be restarted any required number of attemts.
+
+#### Open questions
+
+1. Shutting individual Actors or the whole Environment down:
+   - it is required to find a way to terminate an Actor to avoid resource leak
+   - same thing with the Environment - there must be a trigger to shut it down
+1. Interacting with started/running Environment:
+   - is it really needed?
+   - for what use cases?
+1. Collecting internal telemetry about the Environment:
+   - metrics: messages throughput per actor, system-wise
+   - events: detect congestion? detect infinite loop?
+   - how external watcher can be sure the Environment is making progress?
+     - watcher must be able to send and receive messages
+     - watcher is an actor itself?
+1. Getting something back from the Environment:
+   - subscribe a callback to specific events?
+   - concept of a value wrapped with `Future`? type-safety?
+   - simple `Arc<Mutex<T>>` as an external boundary?
+     - synchronization required to actually produce value
+   - `Stream` of events as an output channel from the Environment?
+     - half-actor / half-iterable?
+1. When a new Actor is spawned under the taken Address:
+   - anonymous Actor as an option?
+     - unique Address is assigned by the Environment
+   - error?
+     - how to communicate it to the "parent" Actor?
+     - "parent" Actor must be aware of Address restrictions?
+     - "parent" Actor's Address can be used as a prefix?
+   - custom routing?
+     - round robin?
+     - replication? requires message to be `Clone`, seems to make sense
+   
+#### Implementation tasks
+
+1. Shutdown an Actor under specific Address
+1. Shutdown the Environment
+   - graceful?
+1. IO-bridge abstraction
+   - async event loop running on different thread
+     - connected to main thread pool via channels
+     - mio-tcp-server as a starting point, including multithreaded implementation
+   - socket?
+   - filesystem?
+1. Full implementation of WebSocket server on top of Actors
+   - TCP listener is an Actor
+   - connection listeners are Actors
+     - parsing bytes to HTTP/WebSocket frames
+     - serializing WebSocket frames to bytes
+1. Define benefitial use-cases and provide example implementations
+
+#### References
+
+1. Hewitt, Carl; Bishop, Peter; Steiger, Richard (1973). ["A Universal Modular Actor Formalism for Artificial Intelligence". IJCAI.](
+https://www.ijcai.org/Proceedings/73/Papers/027B.pdf)
+
+1. Wikipedia: [Actor Model](https://en.wikipedia.org/wiki/Actor_model)
