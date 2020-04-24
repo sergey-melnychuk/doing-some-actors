@@ -91,23 +91,25 @@ configuration remains static, thus can be restarted any required number of attem
    - `Stream` of events as an output channel from the Environment?
      - half-actor / half-iterable?
 1. When a new Actor is spawned under the taken Address:
-   - anonymous Actor as an option?
-     - unique Address is assigned by the Environment
-   - error?
-     - how to communicate it to the "parent" Actor?
-     - "parent" Actor must be aware of Address restrictions?
-     - "parent" Actor's Address can be used as a prefix?
-   - custom routing?
-     - round robin?
-     - replication? requires message to be `Clone`, seems to make sense
-   
+   - Not Environment's problem - but User's one
+   - If trying to spawn under taken Address
+     - "new" Actor vanishes without any trace
+   - Want guarantees? - Make it part of the protocol:
+     - create Actor 'child'
+     - send 'ping' to 'child'
+     - receive 'pong' from 'child'
+     - 'child' was spawned successfully
+
 #### Implementation tasks
 
 1. Shutdown an Actor under specific Address
 1. Shutdown the Environment
-   - graceful?
+   - graceful (wait for all tasks to complete)?
+     - long-running tasks?
+     - tasks that spawn another tasks?
+     - seems like proper shutdown is problem/solution-specific
 1. IO-bridge abstraction
-   - async event loop running on different thread
+   - event loop running on a different thread
      - connected to main thread pool via channels
      - mio-tcp-server as a starting point, including multithreaded implementation
    - socket?
@@ -117,7 +119,25 @@ configuration remains static, thus can be restarted any required number of attem
    - connection listeners are Actors
      - parsing bytes to HTTP/WebSocket frames
      - serializing WebSocket frames to bytes
-1. Define benefitial use-cases and provide example implementations
+1. Define beneficial use-cases and provide example implementations
+   - distributed hash-table
+   - distributed lock service
+     - PAXOS
+   - large-scale stream processing
+     - persistence?
+     - idempotence?
+     - fault-tolerance? (e.g. spark-style checkpoints)
+1. Raw Actors:
+   - Message is just a byte buffer
+     - serialize and send byte buffer
+     - receive byte buffer and try deserialize
+   - Such Raw Actor can be used as connection handler in mio-based event loop
+     - yet incoming message can be checked if it is `&[u8]`
+     - so no strict distinction between Raw Actor and just Actor
+   - (de)serialization
+     - `fn(&[u8]) -> Option<T>`
+     - `fn(T) -> Vec<u8>` 
+     - or `fn(T, &mut [u8]) -> Result<usize>` (potentially no allocation)
 
 #### References
 
