@@ -7,6 +7,7 @@ use std::sync::{Mutex, Arc};
 use std::time::{Instant, Duration, SystemTime};
 use std::cmp::Ordering;
 use std::ops::Add;
+use std::fmt;
 
 pub trait AnyActor {
     fn receive(&mut self, envelope: Envelope, sender: &mut dyn AnySender);
@@ -112,24 +113,43 @@ impl PartialOrd for Entry {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct SchedulerMetrics {
     at: u64,
-    tick: u64,
     millis: u64,
-    hit: u64,
     miss: u64,
+    hit: u64,
+    tick: u64,
     messages: u64,
-    returns: u64,
     queues: u64,
+    returns: u64,
     spawns: u64,
     delays: u64,
 }
 
+impl fmt::Debug for SchedulerMetrics {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SchedulerMetrics")
+            .field("at", &self.at)
+            .field("millis", &self.millis)
+            .field("miss", &self.miss)
+            .field("hit", &self.hit)
+            .field("tick", &self.tick)
+            .field("messages", &self.messages)
+            .field("queues", &self.queues)
+            .field("returns", &self.returns)
+            .field("spawns", &self.spawns)
+            .field("delays", &self.delays)
+            .finish()
+    }
+}
+
 // TODO return subscription/handle instead of blocking forever
 pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool) {
+    // TODO extract to configuration
     // Maximum number of envelopes an actor can process at single scheduled execution
     const THROUGHPUT: usize = 1;
+    const METRICS_REPORTING_INTERVAL: Duration = Duration::from_secs(1);
 
     let (events_tx, events_rx) = channel();
     let events_rx = Arc::new(Mutex::new(events_rx));
@@ -179,7 +199,6 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool) {
     }
 
     pool.submit(move || {
-        let metrics_reporting_period_millis: u64 = 1000;
         let mut metrics = SchedulerMetrics::default();
         let mut start = Instant::now();
         loop {
@@ -239,11 +258,10 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool) {
             }
 
             metrics.tick += 1;
-            let millis = start.elapsed().as_millis() as u64;
-            if millis >= metrics_reporting_period_millis {
+            if start.elapsed() >= METRICS_REPORTING_INTERVAL {
                 let now = SystemTime::now();
                 metrics.at = now.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
-                metrics.millis = millis;
+                metrics.millis = start.elapsed().as_millis() as u64;
                 println!("{:?}", metrics);
                 metrics = SchedulerMetrics::default();
                 start = Instant::now();
