@@ -1,5 +1,5 @@
 use std::collections::{HashSet, HashMap};
-use crate::untyped::{Scheduler, AnyActor, Envelope, AnySender, start_actor_runtime};
+use crate::core::{Scheduler, AnyActor, Envelope, AnySender, start_actor_runtime};
 use crate::pool::ThreadPool;
 use std::time::{Instant, Duration};
 
