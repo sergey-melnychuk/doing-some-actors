@@ -6,7 +6,6 @@ use std::time::{Instant, Duration};
 struct Round {
     tag: String,
     size: usize,
-    hits: usize,
 }
 
 impl Round {
@@ -14,7 +13,6 @@ impl Round {
         Round {
             tag: tag.to_string(),
             size,
-            hits: 0,
         }
     }
 }
@@ -150,7 +148,7 @@ impl AnyActor for Periodic {
             }
             self.counter += 1;
             if self.counter % 1000 == 0 {
-                let mut total: usize = self.timings.values().sum();
+                let total: usize = self.timings.values().sum();
                 let mut ds = self.timings.keys().into_iter().collect::<Vec<&usize>>();
                 let mut sum: usize = 0;
                 ds.sort();

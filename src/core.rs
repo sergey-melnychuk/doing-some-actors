@@ -84,7 +84,7 @@ enum Action {
     Delay { entry: Entry },
 }
 
-struct Entry {
+pub struct Entry {
     at: Instant,
     tag: String,
     envelope: Envelope,
@@ -94,16 +94,13 @@ impl Eq for Entry {}
 
 impl PartialEq for Entry {
     fn eq(&self, other: &Self) -> bool {
-        (self.tag == other.tag) &&
-            (self.at == other.at) &&
-            (self.envelope.from == other.envelope.from) &&
-            (self.envelope.message.type_id() == other.envelope.message.type_id())
+        self.at == other.at
     }
 }
 
 impl Ord for Entry {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.cmp(other)
+        self.at.cmp(&other.at)
     }
 }
 
@@ -125,7 +122,7 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool) {
         actions_tx.send(Action::Queue { tag, queue }).unwrap();
     }
 
-    for id in 1..pool.size() {
+    for _ in 1..pool.size() {
         let rx = Arc::clone(&events_rx);
         let tx = actions_tx.clone();
 
@@ -136,7 +133,7 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool) {
                 if let Ok(x) = event {
                     match x {
                         Event::Mail { tag, mut actor, mut queue } => {
-                            //println!("[thread-{}] event.mail for tag '{}': {} messages", id, tag, queue.len());
+                            //println!("[worker thread] event.mail for tag '{}': {} messages", id, tag, queue.len());
                             if queue.len() > THROUGHPUT {
                                 let remaining = queue.split_off(THROUGHPUT);
                                 tx.send(Action::Queue { tag: tag.clone(), queue: remaining }).unwrap();
@@ -192,7 +189,7 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool) {
                                 events_tx.send(event).unwrap();
                             },
                             None => {
-                                let mut q = scheduler.queue.entry(tag.clone()).or_default();
+                                let q = scheduler.queue.entry(tag.clone()).or_default();
                                 for e in queue {
                                     q.push(e);
                                 }
@@ -212,7 +209,7 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool) {
             let precision = Duration::from_millis(1);
             let now = Instant::now().add(precision);
             while scheduler.tasks.peek().map(|e| e.at <= now).unwrap_or_default() {
-                if let Some(Entry { at, tag, envelope }) = scheduler.tasks.pop() {
+                if let Some(Entry { at: _, tag, envelope }) = scheduler.tasks.pop() {
                     let action = Action::Queue { tag, queue: vec![envelope] };
                     actions_tx.send(action).unwrap();
                 }

@@ -1,13 +1,14 @@
 use crate::core::{Envelope, AnySender, AnyActor, Scheduler, start_actor_runtime};
-use std::collections::HashMap;
 use crate::pool::ThreadPool;
 
+#[allow(dead_code)]
 struct PingPong {
     tag: String,
     count: usize,
 }
 
 impl PingPong {
+    #[allow(dead_code)]
     fn new(tag: &str) -> PingPong {
         PingPong {
             tag: tag.to_string(),
@@ -41,6 +42,7 @@ impl AnyActor for PingPong {
     }
 }
 
+#[allow(dead_code)]
 struct Child {
     up: String,
     tag: String,
@@ -73,11 +75,13 @@ impl AnyActor for Child {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Default)]
 struct Counter {
     count: usize,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 enum Something {
     Thing1(u64),
@@ -102,17 +106,12 @@ impl AnyActor for Counter {
     }
 }
 
+#[derive(Default)]
 struct Root {
     epochs: usize,
 }
 
 impl Root {
-    fn new() -> Root {
-        Root {
-            epochs: 0,
-        }
-    }
-
     fn tick(&mut self) -> bool {
         self.epochs += 1;
         self.epochs < 10
@@ -128,73 +127,11 @@ impl AnyActor for Root {
     }
 }
 
-fn low_level_example() {
-    let mut scheduler = Scheduler::default();
-
-    scheduler.spawn("ping", |tag| Box::new(PingPong::new(tag)));
-    scheduler.spawn("pong", |tag| Box::new(PingPong::new(tag)));
-
-    let e = Envelope { message: Box::new("ping".to_string()), from: "pong".to_string() };
-    scheduler.queue.insert("ping".to_string(), vec![e]);
-    let e = Envelope { message: Box::new("pong".to_string()), from: "ping".to_string() };
-    scheduler.queue.insert("pong".to_string(), vec![e]);
-    let e = Envelope { message: Box::new("sup?".to_string()), from: "none".to_string() };
-    scheduler.queue.insert("ping".to_string(), vec![e]);
-
-    scheduler.spawn("counter", |_| Box::new(Counter::default()));
-    let e = Envelope { message: Box::new(42 as usize), from: "unknown".to_string() };
-    scheduler.queue.insert("counter".to_string(), vec![e]);
-
-    let mut epoch: usize = 0;
-    while !scheduler.queue.is_empty() {
-        println!("epoch: {}", epoch);
-        epoch += 1;
-
-        let mut mem: Memory<Envelope> = Memory::new();
-
-        let q: HashMap<String, Vec<Envelope>> = scheduler.queue.drain().collect();
-        println!("queue: {:?}", q.keys());
-        println!("actors: {:?}", scheduler.actors.keys());
-        for (addr, env) in q.into_iter() {
-            let mut actor = scheduler.actors.get_mut(&addr).unwrap();
-            for e in env {
-                actor.receive(e, &mut mem);
-            }
-
-            for (tag, actor) in mem.new.drain() {
-                if scheduler.actors.contains_key(&tag) {
-                    println!("TODO spawning actor at taken address '{}' was requested", tag);
-                } else {
-                    println!("spawning actor '{}'", tag.clone());
-                    scheduler.actors.insert(tag, actor);
-                }
-            }
-        }
-
-        for (addr, vec) in mem.map.into_iter() {
-            scheduler.queue.insert(addr, vec);
-        }
-        println!("---");
-    }
-
-    let mut m: Memory<Envelope> = Memory::new();
-    let e = Envelope { message: Box::new(42 as u64), from: "none".to_string() };
-    scheduler.actors.get_mut("summator").unwrap().receive(e, &mut m);
-
-    let e = Envelope { message: Box::new(Something::Thing1(91)), from: "none".to_string() };
-    scheduler.actors.get_mut("counter").unwrap().receive(e, &mut m);
-
-    let e = Envelope { message: Box::new(Something::Thing2("enabled".to_string(), false)), from: "none".to_string() };
-    scheduler.actors.get_mut("counter").unwrap().receive(e, &mut m);
-
-    let e = Envelope { message: Box::new(Something::RawThing(vec![42, 43, 44])), from: "none".to_string() };
-    scheduler.actors.get_mut("counter").unwrap().receive(e, &mut m);
-}
-
+#[allow(dead_code)]
 fn high_level_example() {
     let mut scheduler = Scheduler::default();
 
-    scheduler.spawn("root", |_| Box::new(Root::new()));
+    scheduler.spawn("root", |_| Box::new(Root::default()));
     scheduler.spawn("ping", |tag| Box::new(PingPong::new(tag)));
     scheduler.spawn("pong", |tag| Box::new(PingPong::new(tag)));
 
