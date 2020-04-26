@@ -4,7 +4,7 @@ use std::collections::{HashMap, BinaryHeap};
 use crate::pool::ThreadPool;
 use std::sync::mpsc::channel;
 use std::sync::{Mutex, Arc};
-use std::time::{Instant, Duration};
+use std::time::{Instant, Duration, SystemTime};
 use std::cmp::Ordering;
 use std::ops::Add;
 
@@ -73,10 +73,12 @@ impl Scheduler {
     }
 }
 
+// received by Worker threads
 enum Event {
     Mail { tag: String, actor: Box<dyn AnyActor + Send>, queue: Vec<Envelope> },
 }
 
+// received by the Scheduler thread
 enum Action {
     Return { tag: String, actor: Box<dyn AnyActor + Send> },
     Spawn { tag: String, actor: Box<dyn AnyActor + Send> },
@@ -110,8 +112,23 @@ impl PartialOrd for Entry {
     }
 }
 
+#[derive(Debug, Default)]
+struct SchedulerMetrics {
+    at: u64,
+    tick: u64,
+    millis: u64,
+    hit: u64,
+    miss: u64,
+    messages: u64,
+    returns: u64,
+    queues: u64,
+    spawns: u64,
+    delays: u64,
+}
+
 // TODO return subscription/handle instead of blocking forever
 pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool) {
+    // Maximum number of envelopes an actor can process at single scheduled execution
     const THROUGHPUT: usize = 1;
 
     let (events_tx, events_rx) = channel();
@@ -162,15 +179,16 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool) {
     }
 
     pool.submit(move || {
-        let mut tick: usize = 0;
-        let mut messages: usize = 0;
+        let metrics_reporting_period_millis: u64 = 1000;
+        let mut metrics = SchedulerMetrics::default();
         let mut start = Instant::now();
         loop {
-            let action = actions_rx.try_recv();
-            if let Ok(x) = action {
-                match x {
+            let received = actions_rx.try_recv();
+            if let Ok(action) = received {
+                metrics.hit += 1;
+                match action {
                     Action::Return { tag, actor } => {
-                        //println!("return of '{}'", tag);
+                        metrics.returns += 1;
                         let mut queue = scheduler.queue.remove(&tag).unwrap_or_default();
                         if !queue.is_empty() {
                             if queue.len() > THROUGHPUT {
@@ -182,27 +200,32 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool) {
                         scheduler.actors.insert(tag, actor);
                     },
                     Action::Queue { tag, queue } => {
-                        messages += queue.len();
+                        metrics.queues += 1;
+                        metrics.messages += queue.len() as u64;
                         match scheduler.actors.remove(&tag) {
                             Some(actor) => {
                                 let event = Event::Mail { tag, actor, queue };
                                 events_tx.send(event).unwrap();
                             },
                             None => {
-                                let q = scheduler.queue.entry(tag.clone()).or_default();
-                                for e in queue {
-                                    q.push(e);
-                                }
+                                scheduler.queue
+                                    .entry(tag.clone())
+                                    .or_default()
+                                    .extend(queue.into_iter());
                             }
                         }
                     },
                     Action::Spawn { tag, actor } => {
+                        metrics.spawns += 1;
                         scheduler.actors.insert(tag, actor);
                     },
                     Action::Delay { entry } => {
+                        metrics.delays +=1 ;
                         scheduler.tasks.push(entry);
                     }
                 }
+            } else {
+                metrics.miss +=1 ;
             }
 
             // TODO Collect statistic about running time of this loop to estimate `precision`
@@ -215,16 +238,15 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool) {
                 }
             }
 
-            tick += 1;
-            if tick % 1000000 == 0 {
-                if messages > 0 {
-                    let elapsed = start.elapsed().as_millis() as usize;
-                    let rate = (messages as f64 / (elapsed as f64 / 1000.0)) as usize;
-                    println!("tick={}M messages={} elapsed: {} ms | rate = {} mps",
-                             tick / 1000000, messages, elapsed, rate);
-                }
+            metrics.tick += 1;
+            let millis = start.elapsed().as_millis() as u64;
+            if millis >= metrics_reporting_period_millis {
+                let now = SystemTime::now();
+                metrics.at = now.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
+                metrics.millis = millis;
+                println!("{:?}", metrics);
+                metrics = SchedulerMetrics::default();
                 start = Instant::now();
-                messages = 0;
             }
         }
     });
