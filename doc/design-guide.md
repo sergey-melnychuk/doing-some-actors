@@ -74,7 +74,7 @@ configuration remains static, thus can be restarted any required number of attem
 1. Shutting individual Actors or the whole Environment down:
    - it is required to find a way to terminate an Actor to avoid resource leak
    - same thing with the Environment - there must be a trigger to shut it down
-1. Interacting with started/running Environment:
+1. Interacting with started & running Environment:
    - is it really needed?
    - for what use cases?
 1. Collecting internal telemetry about the Environment:
@@ -90,6 +90,7 @@ configuration remains static, thus can be restarted any required number of attem
      - synchronization required to actually produce value
    - `Stream` of events as an output channel from the Environment?
      - half-actor / half-iterable?
+   - `Channel` for Actor to publish result to
 1. When a new Actor is spawned under the taken Address:
    - Not Environment's problem - but User's one
    - If trying to spawn under taken Address
@@ -102,7 +103,22 @@ configuration remains static, thus can be restarted any required number of attem
 
 #### Implementation tasks
 
+1. Actor failure handling
+   - `std::panic::catch_unwind` ([doc](https://doc.rust-lang.org/std/panic/fn.catch_unwind.html)) + `AssertUnwindSafe` ([doc](https://doc.rust-lang.org/std/panic/struct.AssertUnwindSafe.html)) 
+   - if recoverable - recovery to stable state (simply ignore and carry on)
+     - recoverable == can carry on performing the task
+     - occurred in 100% owned code (not library, not RPC nor 3rd party)
+     - does not depend on external resources (file/socket descriptors, etc)
+     - such failure must be part of the application domain
+     - e.g. failed to parse JSON from given string
+   - if non-recoverable - propagate
+     - non-recoverable == can't make any more progress due to the failure
+     - e.g. failed to bind a listener to specific port number
+     - propagate where? to "parent"/"supervisor"? no such concepts exist here yet!
+     - TODO this section needs extra attention
 1. Shutdown an Actor under specific Address
+     - send a message asking the Actor to stop
+     - ask Scheduler to mark Address as free/unoccupied
 1. Shutdown the Environment
    - graceful (wait for all tasks to complete)?
      - long-running tasks?
@@ -112,8 +128,8 @@ configuration remains static, thus can be restarted any required number of attem
    - event loop running on a different thread
      - connected to main thread pool via channels
      - mio-tcp-server as a starting point, including multithreaded implementation
-   - socket?
-   - filesystem?
+   - TCP/UDP sockets: MIO/epoll
+   - filesystem: TBD
 1. Full implementation of WebSocket server on top of Actors
    - TCP listener is an Actor
    - connection listeners are Actors
@@ -145,3 +161,4 @@ configuration remains static, thus can be restarted any required number of attem
 https://www.ijcai.org/Proceedings/73/Papers/027B.pdf)
 
 1. Wikipedia: [Actor Model](https://en.wikipedia.org/wiki/Actor_model)
+    
