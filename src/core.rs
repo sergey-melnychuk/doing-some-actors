@@ -36,7 +36,9 @@ impl AnySender for Memory<Envelope> {
     }
 
     fn delay(&mut self, address: &str, envelope: Envelope, duration: Duration) {
-        self.delay.push(Entry { at: Instant::now().add(duration), tag: address.to_string(), envelope });
+        let at = Instant::now().add(duration);
+        let entry = Entry { at, tag: address.to_string(), envelope };
+        self.delay.push(entry);
     }
 
     fn stop(&mut self, address: &str) {
@@ -84,7 +86,8 @@ impl AnySender for Scheduler {
     }
 
     fn delay(&mut self, address: &str, envelope: Envelope, duration: Duration) {
-        let entry = Entry { at: Instant::now().add(duration), tag: address.to_string(), envelope };
+        let at = Instant::now().add(duration);
+        let entry = Entry { at, tag: address.to_string(), envelope };
         self.tasks.push(entry);
     }
 
@@ -299,7 +302,7 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool, confi
             let precision = Duration::from_millis(1);
             let now = Instant::now().add(precision);
             while scheduler.tasks.peek().map(|e| e.at <= now).unwrap_or_default() {
-                if let Some(Entry { at: _, tag, envelope }) = scheduler.tasks.pop() {
+                if let Some(Entry { tag, envelope, .. }) = scheduler.tasks.pop() {
                     let action = Action::Queue { tag, queue: vec![envelope] };
                     actions_tx.send(action).unwrap();
                 }

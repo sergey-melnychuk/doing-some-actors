@@ -149,7 +149,7 @@ impl AnyActor for Periodic {
             self.counter += 1;
             if self.counter % 1000 == 0 {
                 let total: usize = self.timings.values().sum();
-                let mut ds = self.timings.keys().into_iter().collect::<Vec<&usize>>();
+                let mut ds = self.timings.keys().collect::<Vec<&usize>>();
                 let mut sum: usize = 0;
                 ds.sort();
                 println!("timer latencies:");
@@ -167,7 +167,7 @@ impl AnyActor for Periodic {
 }
 
 pub fn run() {
-    const SIZE: usize = 100000;
+    const SIZE: usize = 100_000;
 
     let mut scheduler = Scheduler::default();
 
