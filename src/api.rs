@@ -1,12 +1,11 @@
 use std::collections::{HashSet, HashMap};
-use crate::untyped::{Scheduler, AnyActor, Envelope, AnySender, start_actor_runtime};
+use crate::core::{Scheduler, AnyActor, Envelope, AnySender, start_actor_runtime};
 use crate::pool::ThreadPool;
 use std::time::{Instant, Duration};
 
 struct Round {
     tag: String,
     size: usize,
-    hits: usize,
 }
 
 impl Round {
@@ -14,7 +13,6 @@ impl Round {
         Round {
             tag: tag.to_string(),
             size,
-            hits: 0,
         }
     }
 }
@@ -150,8 +148,8 @@ impl AnyActor for Periodic {
             }
             self.counter += 1;
             if self.counter % 1000 == 0 {
-                let mut total: usize = self.timings.values().sum();
-                let mut ds = self.timings.keys().into_iter().collect::<Vec<&usize>>();
+                let total: usize = self.timings.values().sum();
+                let mut ds = self.timings.keys().collect::<Vec<&usize>>();
                 let mut sum: usize = 0;
                 ds.sort();
                 println!("timer latencies:");
@@ -169,7 +167,7 @@ impl AnyActor for Periodic {
 }
 
 pub fn run() {
-    const SIZE: usize = 100000;
+    const SIZE: usize = 100_000;
 
     let mut scheduler = Scheduler::default();
 
@@ -195,5 +193,5 @@ pub fn run() {
     scheduler.send("timer", tick);
 
     let pool = ThreadPool::new(std::cmp::max(5, num_cpus::get()));
-    start_actor_runtime(scheduler, pool);
+    start_actor_runtime(scheduler, pool, None);
 }
