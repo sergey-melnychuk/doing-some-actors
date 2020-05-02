@@ -193,5 +193,5 @@ pub fn run() {
     scheduler.send("timer", tick);
 
     let pool = ThreadPool::new(std::cmp::max(5, num_cpus::get()));
-    start_actor_runtime(scheduler, pool);
+    start_actor_runtime(scheduler, pool, None);
 }

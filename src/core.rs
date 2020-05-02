@@ -144,12 +144,25 @@ impl fmt::Debug for SchedulerMetrics {
     }
 }
 
-// TODO return subscription/handle instead of blocking forever
-pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool) {
-    // TODO extract to configuration
+#[derive(Copy, Clone)]
+pub struct SchedulerConfig {
     // Maximum number of envelopes an actor can process at single scheduled execution
-    const THROUGHPUT: usize = 1;
-    const METRICS_REPORTING_INTERVAL: Duration = Duration::from_secs(1);
+    throughput: usize,
+    metric_reporting_interval: Duration,
+}
+
+impl Default for SchedulerConfig {
+    fn default() -> Self {
+        SchedulerConfig {
+            throughput: 1,
+            metric_reporting_interval: Duration::from_secs(1),
+        }
+    }
+}
+
+// TODO return subscription/handle instead of blocking forever
+pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool, config_opt: Option<SchedulerConfig>) {
+    let config = config_opt.unwrap_or_default();
 
     let (events_tx, events_rx) = channel();
     let events_rx = Arc::new(Mutex::new(events_rx));
@@ -171,8 +184,8 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool) {
                     match x {
                         Event::Mail { tag, mut actor, mut queue } => {
                             //println!("[worker thread] event.mail for tag '{}': {} messages", id, tag, queue.len());
-                            if queue.len() > THROUGHPUT {
-                                let remaining = queue.split_off(THROUGHPUT);
+                            if queue.len() > config.throughput {
+                                let remaining = queue.split_off(config.throughput);
                                 tx.send(Action::Queue { tag: tag.clone(), queue: remaining }).unwrap();
                             }
                             for envelope in queue.into_iter() {
@@ -210,8 +223,8 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool) {
                         metrics.returns += 1;
                         let mut queue = scheduler.queue.remove(&tag).unwrap_or_default();
                         if !queue.is_empty() {
-                            if queue.len() > THROUGHPUT {
-                                let remaining = queue.split_off(THROUGHPUT);
+                            if queue.len() > config.throughput {
+                                let remaining = queue.split_off(config.throughput);
                                 scheduler.queue.insert(tag.clone(), remaining);
                             }
                             actions_tx.send(Action::Queue { tag: tag.clone(), queue }).unwrap();
@@ -258,7 +271,7 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool) {
             }
 
             metrics.tick += 1;
-            if start.elapsed() >= METRICS_REPORTING_INTERVAL {
+            if start.elapsed() >= config.metric_reporting_interval {
                 let now = SystemTime::now();
                 metrics.at = now.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
                 metrics.millis = start.elapsed().as_millis() as u64;

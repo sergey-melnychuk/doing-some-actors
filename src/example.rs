@@ -141,5 +141,5 @@ fn high_level_example() {
     scheduler.send("ping", ping);
 
     let pool = ThreadPool::new(num_cpus::get());
-    start_actor_runtime(scheduler, pool);
+    start_actor_runtime(scheduler, pool, None);
 }
