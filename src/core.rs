@@ -1,5 +1,5 @@
 use std::any::Any;
-use std::collections::{HashMap, BinaryHeap};
+use std::collections::{HashMap, BinaryHeap, HashSet};
 
 use crate::pool::ThreadPool;
 use std::sync::mpsc::channel;
@@ -21,23 +21,26 @@ pub struct Envelope {
 
 pub trait AnySender {
     fn send(&mut self, address: &str, message: Envelope);
-    fn spawn(&mut self, address: &str, parent: &str, f: fn(&str, &str) -> Box<dyn AnyActor + Send>);
+    fn spawn(&mut self, address: &str, f: fn(&str) -> Box<dyn AnyActor + Send>);
     fn delay(&mut self, address: &str, envelope: Envelope, duration: Duration);
+    fn stop(&mut self, address: &str);
 }
 
 impl AnySender for Memory<Envelope> {
     fn send(&mut self, address: &str, message: Envelope) {
-        //println!("sending message from '{}' to '{}'", message.from, address);
         self.map.entry(address.to_string()).or_default().push(message);
     }
 
-    fn spawn(&mut self, address: &str, parent: &str, f: fn(&str, &str) -> Box<dyn AnyActor + Send>) {
-        println!("request for spawning actor '{}' of parent '{}'", address, parent);
-        self.new.insert(address.to_string(), f(address, parent));
+    fn spawn(&mut self, address: &str, f: fn(&str) -> Box<dyn AnyActor + Send>) {
+        self.new.insert(address.to_string(), f(address));
     }
 
     fn delay(&mut self, address: &str, envelope: Envelope, duration: Duration) {
         self.delay.push(Entry { at: Instant::now().add(duration), tag: address.to_string(), envelope });
+    }
+
+    fn stop(&mut self, address: &str) {
+        self.stop.insert(address.to_string());
     }
 }
 
@@ -45,6 +48,7 @@ struct Memory<T: Any + Sized + Send> {
     map: HashMap<String, Vec<T>>,
     new: HashMap<String, Box<dyn AnyActor + Send>>,
     delay: Vec<Entry>,
+    stop: HashSet<String>,
 }
 
 impl<T: Any + Sized + Send> Memory<T> {
@@ -53,6 +57,7 @@ impl<T: Any + Sized + Send> Memory<T> {
             map: HashMap::new(),
             new: HashMap::new(),
             delay: Vec::new(),
+            stop: HashSet::new(),
         }
     }
 }
@@ -62,15 +67,31 @@ pub struct Scheduler {
     pub actors: HashMap<String, Box<dyn AnyActor + Send>>,
     pub queue: HashMap<String, Vec<Envelope>>,
     pub tasks: BinaryHeap<Entry>,
+    pub active: HashSet<String>,
 }
 
-impl Scheduler {
-    pub fn spawn(&mut self, tag: &str, f: fn(&str) -> Box<dyn AnyActor + Send>) {
-        let actor = f(tag);
-        self.actors.insert(tag.to_string(), actor);
-    }
-    pub fn send(&mut self, tag: &str, envelope: Envelope) {
+impl AnySender for Scheduler {
+    fn send(&mut self, tag: &str, envelope: Envelope) {
         self.queue.entry(tag.to_string()).or_default().push(envelope);
+    }
+
+    fn spawn(&mut self, tag: &str, f: fn(&str) -> Box<dyn AnyActor + Send>) {
+        if !self.active.contains(tag) {
+            let actor = f(tag);
+            self.actors.insert(tag.to_string(), actor);
+            self.active.insert(tag.to_string());
+        }
+    }
+
+    fn delay(&mut self, address: &str, envelope: Envelope, duration: Duration) {
+        let entry = Entry { at: Instant::now().add(duration), tag: address.to_string(), envelope };
+        self.tasks.push(entry);
+    }
+
+    fn stop(&mut self, address: &str) {
+        self.active.remove(address);
+        self.actors.remove(address);
+        self.queue.remove(address);
     }
 }
 
@@ -85,6 +106,7 @@ enum Action {
     Spawn { tag: String, actor: Box<dyn AnyActor + Send> },
     Queue { tag: String, queue: Vec<Envelope> },
     Delay { entry: Entry },
+    Stop { tag: String },
 }
 
 pub struct Entry {
@@ -183,7 +205,6 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool, confi
                 if let Ok(x) = event {
                     match x {
                         Event::Mail { tag, mut actor, mut queue } => {
-                            //println!("[worker thread] event.mail for tag '{}': {} messages", id, tag, queue.len());
                             if queue.len() > config.throughput {
                                 let remaining = queue.split_off(config.throughput);
                                 tx.send(Action::Queue { tag: tag.clone(), queue: remaining }).unwrap();
@@ -206,6 +227,10 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool, confi
                         let action = Action::Delay { entry };
                         tx.send(action).unwrap();
                     }
+                    for tag in memory.stop.drain().into_iter() {
+                        let action = Action::Stop { tag };
+                        tx.send(action).unwrap();
+                    }
                 }
             }
         });
@@ -220,40 +245,50 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool, confi
                 metrics.hit += 1;
                 match action {
                     Action::Return { tag, actor } => {
-                        metrics.returns += 1;
-                        let mut queue = scheduler.queue.remove(&tag).unwrap_or_default();
-                        if !queue.is_empty() {
-                            if queue.len() > config.throughput {
-                                let remaining = queue.split_off(config.throughput);
-                                scheduler.queue.insert(tag.clone(), remaining);
+                        if scheduler.active.contains(&tag) {
+                            metrics.returns += 1;
+                            let mut queue = scheduler.queue.remove(&tag).unwrap_or_default();
+                            if !queue.is_empty() {
+                                if queue.len() > config.throughput {
+                                    let remaining = queue.split_off(config.throughput);
+                                    scheduler.queue.insert(tag.clone(), remaining);
+                                }
+                                actions_tx.send(Action::Queue { tag: tag.clone(), queue }).unwrap();
                             }
-                            actions_tx.send(Action::Queue { tag: tag.clone(), queue }).unwrap();
+                            scheduler.actors.insert(tag, actor);
                         }
-                        scheduler.actors.insert(tag, actor);
                     },
                     Action::Queue { tag, queue } => {
-                        metrics.queues += 1;
-                        metrics.messages += queue.len() as u64;
-                        match scheduler.actors.remove(&tag) {
-                            Some(actor) => {
-                                let event = Event::Mail { tag, actor, queue };
-                                events_tx.send(event).unwrap();
-                            },
-                            None => {
-                                scheduler.queue
-                                    .entry(tag.clone())
-                                    .or_default()
-                                    .extend(queue.into_iter());
+                        if scheduler.active.contains(&tag) {
+                            metrics.queues += 1;
+                            metrics.messages += queue.len() as u64;
+                            match scheduler.actors.remove(&tag) {
+                                Some(actor) => {
+                                    let event = Event::Mail { tag, actor, queue };
+                                    events_tx.send(event).unwrap();
+                                },
+                                None => {
+                                    scheduler.queue
+                                        .entry(tag.clone())
+                                        .or_default()
+                                        .extend(queue.into_iter());
+                                }
                             }
                         }
                     },
                     Action::Spawn { tag, actor } => {
-                        metrics.spawns += 1;
-                        scheduler.actors.insert(tag, actor);
+                        if !scheduler.active.contains(&tag) {
+                            metrics.spawns += 1;
+                            scheduler.actors.insert(tag.clone(), actor);
+                            scheduler.active.insert(tag);
+                        }
                     },
                     Action::Delay { entry } => {
                         metrics.delays +=1 ;
                         scheduler.tasks.push(entry);
+                    },
+                    Action::Stop { tag } => {
+                        scheduler.stop(&tag);
                     }
                 }
             } else {

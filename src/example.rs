@@ -33,8 +33,7 @@ impl AnyActor for PingPong {
                 sender.send(&envelope.from, r);
             } else {
                 println!("PingPong actor received unexpected string: '{}'", s);
-                sender.spawn("summator", &self.tag,
-                             |tag, parent| Box::new(Child::new(tag, parent)));
+                sender.spawn("summator", |tag| Box::new(Child::new(tag)));
                 let m = Envelope { message: Box::new(42 as u64), from: self.tag.clone() };
                 sender.send("summator", m);
             }
@@ -42,18 +41,15 @@ impl AnyActor for PingPong {
     }
 }
 
-#[allow(dead_code)]
 struct Child {
-    up: String,
     tag: String,
     sum: u64,
 }
 
 impl Child {
-    fn new(tag: &str, up: &str) -> Child {
+    fn new(tag: &str) -> Child {
         Child {
             tag: tag.to_string(),
-            up: up.to_string(),
             sum: 0,
         }
     }
