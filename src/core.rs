@@ -2,7 +2,7 @@ use std::any::Any;
 use std::collections::{HashMap, BinaryHeap, HashSet};
 
 use crate::pool::ThreadPool;
-use std::sync::mpsc::channel;
+use std::sync::mpsc::{channel, Sender};
 use std::sync::{Mutex, Arc};
 use std::time::{Instant, Duration, SystemTime};
 use std::cmp::Ordering;
@@ -17,6 +17,15 @@ pub trait AnyActor {
 pub struct Envelope {
     pub message: Box<dyn Any + Send>,
     pub from: String,
+}
+
+impl Default for Envelope {
+    fn default() -> Self {
+        Envelope {
+            message: Box::new(()),
+            from: String::default(),
+        }
+    }
 }
 
 pub trait AnySender {
@@ -46,6 +55,28 @@ impl AnySender for Memory<Envelope> {
     }
 }
 
+impl Memory<Envelope> {
+    fn drain(&mut self, tx: &Sender<Action>) {
+        for (tag, actor) in self.new.drain().into_iter() {
+            let action = Action::Spawn { tag, actor };
+            tx.send(action).unwrap();
+        }
+        for (tag, queue) in self.map.drain().into_iter() {
+            let action = Action::Queue { tag, queue };
+            tx.send(action).unwrap();
+        }
+        for entry in self.delay.drain(..).into_iter() {
+            let action = Action::Delay { entry };
+            tx.send(action).unwrap();
+        }
+        for tag in self.stop.drain().into_iter() {
+            let action = Action::Stop { tag };
+            tx.send(action).unwrap();
+        }
+    }
+}
+
+#[derive(Default)]
 struct Memory<T: Any + Sized + Send> {
     map: HashMap<String, Vec<T>>,
     new: HashMap<String, Box<dyn AnyActor + Send>>,
@@ -53,31 +84,20 @@ struct Memory<T: Any + Sized + Send> {
     stop: HashSet<String>,
 }
 
-impl<T: Any + Sized + Send> Memory<T> {
-    fn new() -> Memory<T> {
-        Memory {
-            map: HashMap::new(),
-            new: HashMap::new(),
-            delay: Vec::new(),
-            stop: HashSet::new(),
-        }
-    }
-}
-
 #[derive(Default)]
 pub struct Scheduler {
-    pub actors: HashMap<String, Box<dyn AnyActor + Send>>,
-    pub queue: HashMap<String, Vec<Envelope>>,
-    pub tasks: BinaryHeap<Entry>,
-    pub active: HashSet<String>,
+    actors: HashMap<String, Box<dyn AnyActor + Send>>,
+    queue: HashMap<String, Vec<Envelope>>,
+    tasks: BinaryHeap<Entry>,
+    active: HashSet<String>,
 }
 
-impl AnySender for Scheduler {
-    fn send(&mut self, tag: &str, envelope: Envelope) {
+impl Scheduler {
+    pub fn send(&mut self, tag: &str, envelope: Envelope) {
         self.queue.entry(tag.to_string()).or_default().push(envelope);
     }
 
-    fn spawn(&mut self, tag: &str, f: fn(&str) -> Box<dyn AnyActor + Send>) {
+    pub fn spawn(&mut self, tag: &str, f: fn(&str) -> Box<dyn AnyActor + Send>) {
         if !self.active.contains(tag) {
             let actor = f(tag);
             self.actors.insert(tag.to_string(), actor);
@@ -85,7 +105,7 @@ impl AnySender for Scheduler {
         }
     }
 
-    fn delay(&mut self, address: &str, envelope: Envelope, duration: Duration) {
+    pub fn delay(&mut self, address: &str, envelope: Envelope, duration: Duration) {
         let at = Instant::now().add(duration);
         let entry = Entry { at, tag: address.to_string(), envelope };
         self.tasks.push(entry);
@@ -202,7 +222,7 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool, confi
         let tx = actions_tx.clone();
 
         pool.submit(move || {
-            let mut memory: Memory<Envelope> = Memory::new();
+            let mut memory: Memory<Envelope> = Memory::default();
             loop {
                 let event = rx.lock().unwrap().try_recv();
                 if let Ok(x) = event {
@@ -218,22 +238,7 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool, confi
                             tx.send(Action::Return { tag, actor }).unwrap();
                         }
                     }
-                    for (tag, actor) in memory.new.drain().into_iter() {
-                        let action = Action::Spawn { tag, actor };
-                        tx.send(action).unwrap();
-                    }
-                    for (tag, queue) in memory.map.drain().into_iter() {
-                        let action = Action::Queue { tag, queue };
-                        tx.send(action).unwrap();
-                    }
-                    for entry in memory.delay.drain(..).into_iter() {
-                        let action = Action::Delay { entry };
-                        tx.send(action).unwrap();
-                    }
-                    for tag in memory.stop.drain().into_iter() {
-                        let action = Action::Stop { tag };
-                        tx.send(action).unwrap();
-                    }
+                    memory.drain(&tx);
                 }
             }
         });

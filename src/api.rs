@@ -86,22 +86,20 @@ impl AnyActor for Root {
 impl AnyActor for Round {
     fn receive(&mut self, envelope: Envelope, sender: &mut dyn AnySender) {
         if let Some(hit) = envelope.message.downcast_ref::<Hit>() {
-            if hit.0 > 0 && hit.0 % self.size == 0 {
-                println!("the hit went around: hits={}", hit.0);
-            }
+            // if hit.0 > 0 && hit.0 % self.size == 0 {
+            //     println!("the hit went around: hits={}", hit.0);
+            // }
             let next = (hit.0 + 1) % self.size;
             let tag = format!("{}", next);
-            //println!("tag:{} hits={} next={}", self.tag, hit.0, tag);
             let m = Hit(hit.0 + 1);
             let envelope = Envelope { message: Box::new(m), from: self.tag.clone() };
             sender.send(&tag, envelope);
         } else if let Some(acc) = envelope.message.downcast_ref::<Acc>() {
-            if acc.name == self.tag && acc.hits > 0 {
-                println!("acc '{}' went around: hits={}", acc.name, acc.hits);
-            }
+            // if acc.name == self.tag && acc.hits > 0 {
+            //     println!("acc '{}' went around: hits={}", acc.name, acc.hits);
+            // }
             let next = (acc.zero + acc.hits + 1) % self.size;
             let tag = format!("{}", next);
-            //println!("tag:{} [acc] name={} hits={} next={}", self.tag, acc.name, acc.hits, next);
             let m = Acc { name: acc.name.clone(), zero: acc.zero, hits: acc.hits + 1 };
             let env = Envelope { message: Box::new(m), from: self.tag.clone() };
             sender.send(&tag, env)
@@ -167,7 +165,7 @@ impl AnyActor for Periodic {
 }
 
 pub fn run() {
-    const SIZE: usize = 100_000;
+    const SIZE: usize = 10000;
 
     let mut scheduler = Scheduler::default();
 
@@ -190,7 +188,7 @@ pub fn run() {
 
     scheduler.spawn("timer", |tag| Box::new(Periodic::new(tag)));
     let tick = Envelope { message: Box::new(Tick { at: Instant::now() }), from: "timer".to_string() };
-    scheduler.send("timer", tick);
+    scheduler.delay("timer", tick, Duration::from_secs(10));
 
     let pool = ThreadPool::new(std::cmp::max(5, num_cpus::get()));
     start_actor_runtime(scheduler, pool, None);

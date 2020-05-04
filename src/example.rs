@@ -1,5 +1,6 @@
 use crate::core::{Envelope, AnySender, AnyActor, Scheduler, start_actor_runtime};
 use crate::pool::ThreadPool;
+use std::time::Duration;
 
 #[allow(dead_code)]
 struct PingPong {
@@ -134,7 +135,7 @@ fn high_level_example() {
     let tick = Envelope { message: Box::new(()), from: "root".to_string() };
     scheduler.send("root", tick);
     let ping = Envelope { message: Box::new("ping".to_string()), from: "pong".to_string() };
-    scheduler.send("ping", ping);
+    scheduler.delay("ping", ping, Duration::from_secs(1));
 
     let pool = ThreadPool::new(num_cpus::get());
     start_actor_runtime(scheduler, pool, None);
