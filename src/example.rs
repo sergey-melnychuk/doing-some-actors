@@ -1,6 +1,7 @@
-use crate::core::{Envelope, AnySender, AnyActor, Scheduler, start_actor_runtime};
-use crate::pool::ThreadPool;
 use std::time::Duration;
+
+use crate::core::{Envelope, AnySender, AnyActor, System};
+use crate::pool::ThreadPool;
 
 #[allow(dead_code)]
 struct PingPong {
@@ -126,17 +127,15 @@ impl AnyActor for Root {
 
 #[allow(dead_code)]
 fn high_level_example() {
-    let mut scheduler = Scheduler::default();
+    let sys = System::new();
+    let sub = sys.run(num_cpus::get());
 
-    scheduler.spawn("root", |_| Box::new(Root::default()));
-    scheduler.spawn("ping", |tag| Box::new(PingPong::new(tag)));
-    scheduler.spawn("pong", |tag| Box::new(PingPong::new(tag)));
+    sub.spawn("root", |_| Box::new(Root::default()));
+    sub.spawn("ping", |tag| Box::new(PingPong::new(tag)));
+    sub.spawn("pong", |tag| Box::new(PingPong::new(tag)));
 
     let tick = Envelope { message: Box::new(()), from: "root".to_string() };
-    scheduler.send("root", tick);
+    sub.send("root", tick);
     let ping = Envelope { message: Box::new("ping".to_string()), from: "pong".to_string() };
-    scheduler.delay("ping", ping, Duration::from_secs(1));
-
-    let pool = ThreadPool::new(num_cpus::get());
-    start_actor_runtime(scheduler, pool, None);
+    sub.delay("ping", ping, Duration::from_secs(1));
 }

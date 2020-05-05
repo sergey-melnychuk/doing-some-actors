@@ -1,7 +1,8 @@
 use std::collections::{HashSet, HashMap};
-use crate::core::{Scheduler, AnyActor, Envelope, AnySender, start_actor_runtime};
-use crate::pool::ThreadPool;
 use std::time::{Instant, Duration};
+
+use crate::core::{AnyActor, Envelope, AnySender, System};
+use crate::pool::ThreadPool;
 
 struct Round {
     tag: String,
@@ -165,31 +166,34 @@ impl AnyActor for Periodic {
 }
 
 pub fn run() {
-    const SIZE: usize = 10000;
+    let threads = std::cmp::max(5, num_cpus::get());
 
-    let mut scheduler = Scheduler::default();
+    let system = System::new();
+    let sub = system.run(threads); // TODO rename from 'Substription' to smth meaningful
 
+    const SIZE: usize = 100_000;
     for id in 0..SIZE {
         let tag = format!("{}", id);
-        scheduler.spawn(&tag, |tag| Box::new(Round::new(tag, SIZE)));
+        sub.spawn(&tag, |tag| Box::new(Round::new(tag, SIZE)));
     }
 
-    scheduler.send("0", Envelope { message: Box::new(Hit(0)), from: String::default() });
+    sub.send("0", Envelope { message: Box::new(Hit(0)), from: String::default() });
+
+    //sub.shutdown();
+    // at this moment, the ThreadPool::drop is called and blocked by infinite loops in pool's threads
+
     for id in 0..1000 {
         let tag = format!("{}", id);
         let acc = Acc { name: tag.clone(), zero: id, hits: 0 };
         let env = Envelope { message: Box::new(acc), from: tag.clone() };
-        scheduler.send(&tag, env);
+        sub.send(&tag, env);
     }
 
-    scheduler.spawn("root", |tag| Box::new(Root::new(tag)));
+    sub.spawn("root", |tag| Box::new(Root::new(tag)));
     let trigger = Envelope { message: Box::new(Fan::Trigger { size: SIZE }), from: "root".to_string() };
-    scheduler.send("root", trigger);
+    sub.send("root", trigger);
 
-    scheduler.spawn("timer", |tag| Box::new(Periodic::new(tag)));
+    sub.spawn("timer", |tag| Box::new(Periodic::new(tag)));
     let tick = Envelope { message: Box::new(Tick { at: Instant::now() }), from: "timer".to_string() };
-    scheduler.delay("timer", tick, Duration::from_secs(10));
-
-    let pool = ThreadPool::new(std::cmp::max(5, num_cpus::get()));
-    start_actor_runtime(scheduler, pool, None);
+    sub.delay("timer", tick, Duration::from_secs(10));
 }
