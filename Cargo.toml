@@ -7,3 +7,10 @@ edition = "2018"
 [dependencies]
 num_cpus = "1.12.0"
 core_affinity = "0.5.10"
+
+[dev-dependencies]
+bencher = "0.1.5"
+
+[[bench]]
+name = "workload"
+harness = false
