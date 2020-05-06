@@ -1,8 +1,7 @@
 use std::collections::{HashSet, HashMap};
 use std::time::{Instant, Duration};
 
-use crate::core::{AnyActor, Envelope, AnySender, System};
-use crate::pool::ThreadPool;
+use crate::core::{AnyActor, Envelope, AnySender, System, Config};
 
 struct Round {
     tag: String,
@@ -168,32 +167,30 @@ impl AnyActor for Periodic {
 pub fn run() {
     let threads = std::cmp::max(5, num_cpus::get());
 
-    let system = System::new();
-    let sub = system.run(threads); // TODO rename from 'Substription' to smth meaningful
+    let cfg = Config::with_threads(threads);
+    let sys = System::new(cfg);
+    let run = sys.run();
 
     const SIZE: usize = 100_000;
     for id in 0..SIZE {
         let tag = format!("{}", id);
-        sub.spawn(&tag, |tag| Box::new(Round::new(tag, SIZE)));
+        run.spawn(&tag, |tag| Box::new(Round::new(tag, SIZE)));
     }
 
-    sub.send("0", Envelope { message: Box::new(Hit(0)), from: String::default() });
-
-    //sub.shutdown();
-    // at this moment, the ThreadPool::drop is called and blocked by infinite loops in pool's threads
+    run.send("0", Envelope { message: Box::new(Hit(0)), from: String::default() });
 
     for id in 0..1000 {
         let tag = format!("{}", id);
         let acc = Acc { name: tag.clone(), zero: id, hits: 0 };
         let env = Envelope { message: Box::new(acc), from: tag.clone() };
-        sub.send(&tag, env);
+        run.send(&tag, env);
     }
 
-    sub.spawn("root", |tag| Box::new(Root::new(tag)));
+    run.spawn("root", |tag| Box::new(Root::new(tag)));
     let trigger = Envelope { message: Box::new(Fan::Trigger { size: SIZE }), from: "root".to_string() };
-    sub.send("root", trigger);
+    run.send("root", trigger);
 
-    sub.spawn("timer", |tag| Box::new(Periodic::new(tag)));
+    run.spawn("timer", |tag| Box::new(Periodic::new(tag)));
     let tick = Envelope { message: Box::new(Tick { at: Instant::now() }), from: "timer".to_string() };
-    sub.delay("timer", tick, Duration::from_secs(10));
+    run.delay("timer", tick, Duration::from_secs(10));
 }

@@ -184,9 +184,18 @@ impl Default for SchedulerConfig {
     }
 }
 
-#[derive(Default)]
 struct RuntimeConfig {
+    threads: usize,
     scheduler: SchedulerConfig,
+}
+
+impl Default for RuntimeConfig {
+    fn default() -> Self {
+        RuntimeConfig {
+            threads: 4,
+            scheduler: SchedulerConfig::default(),
+        }
+    }
 }
 
 struct Runtime {
@@ -208,33 +217,53 @@ impl Runtime {
         }
     }
 
-    fn start(mut self) -> Subscription {
+    fn start(mut self) -> Run {
         let sender = self.actions.0.clone();
-        start_actor_runtime(&mut self.pool, self.scheduler, self.config.scheduler, self.events, self.actions);
-        Subscription { sender, pool: self.pool }
+        start_actor_runtime(&mut self.pool, self.scheduler, self.events, self.actions);
+        Run { sender, pool: self.pool }
     }
 }
 
-pub struct System;
+#[derive(Default)]
+pub struct Config {
+    runtime: RuntimeConfig,
+}
+
+impl Config {
+    pub fn with_threads(threads: usize) -> Config {
+        Config {
+            runtime: RuntimeConfig {
+                threads,
+                scheduler: SchedulerConfig::default(),
+            }
+        }
+    }
+}
+
+pub struct System {
+    config: Config,
+}
 
 impl System {
-    pub fn new() -> System {
-        System
+    pub fn new(config: Config) -> System {
+        System {
+            config
+        }
     }
 
-    pub fn run(self, threads: usize) -> Subscription {
-        let pool = ThreadPool::new(threads);
-        let runtime = Runtime::new(pool, RuntimeConfig::default());
+    pub fn run(self) -> Run {
+        let pool = ThreadPool::new(self.config.runtime.threads);
+        let runtime = Runtime::new(pool, self.config.runtime);
         runtime.start()
     }
 }
 
-pub struct Subscription {
+pub struct Run {
     pool: ThreadPool,
     sender: Sender<Action>,
 }
 
-impl Subscription {
+impl Run {
     pub fn send(&self, address: &str, message: Envelope) {
         let action = Action::Queue { tag: address.to_string(), queue: vec![message] };
         self.sender.send(action).unwrap();
@@ -265,9 +294,9 @@ impl Subscription {
 
 fn start_actor_runtime(pool: &mut ThreadPool,
                        mut scheduler: Scheduler,
-                       config: SchedulerConfig,
                        events: (Sender<Event>, Receiver<Event>),
                        actions: (Sender<Action>, Receiver<Action>)) {
+    let config = scheduler.config;
     let (actions_tx, actions_rx) = actions;
     let (events_tx, events_rx) = events;
     let events_rx = Arc::new(Mutex::new(events_rx));

@@ -1,7 +1,6 @@
 use std::time::Duration;
 
-use crate::core::{Envelope, AnySender, AnyActor, System};
-use crate::pool::ThreadPool;
+use crate::core::{Envelope, AnySender, AnyActor, System, Config};
 
 #[allow(dead_code)]
 struct PingPong {
@@ -127,15 +126,16 @@ impl AnyActor for Root {
 
 #[allow(dead_code)]
 fn high_level_example() {
-    let sys = System::new();
-    let sub = sys.run(num_cpus::get());
+    let cfg = Config::default();
+    let sys = System::new(cfg);
+    let run = sys.run();
 
-    sub.spawn("root", |_| Box::new(Root::default()));
-    sub.spawn("ping", |tag| Box::new(PingPong::new(tag)));
-    sub.spawn("pong", |tag| Box::new(PingPong::new(tag)));
+    run.spawn("root", |_| Box::new(Root::default()));
+    run.spawn("ping", |tag| Box::new(PingPong::new(tag)));
+    run.spawn("pong", |tag| Box::new(PingPong::new(tag)));
 
     let tick = Envelope { message: Box::new(()), from: "root".to_string() };
-    sub.send("root", tick);
+    run.send("root", tick);
     let ping = Envelope { message: Box::new("ping".to_string()), from: "pong".to_string() };
-    sub.delay("ping", ping, Duration::from_secs(1));
+    run.delay("ping", ping, Duration::from_secs(1));
 }
