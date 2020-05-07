@@ -92,7 +92,7 @@ impl Memory<Envelope> {
         }
         for tag in self.stop.drain().into_iter() {
             let action = Action::Stop { tag };
-            tx.send(action).unwrap();
+            tx.send(action).unwrap_or_default();
         }
     }
 }
