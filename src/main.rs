@@ -1,4 +1,4 @@
-mod core;
+pub mod core;
 mod pool;
 mod api;
 mod example;

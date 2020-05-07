@@ -2,15 +2,26 @@ use std::any::Any;
 use std::collections::{HashMap, BinaryHeap, HashSet};
 
 use crate::pool::ThreadPool;
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::{channel, Sender, Receiver};
 use std::sync::{Mutex, Arc};
 use std::time::{Instant, Duration, SystemTime};
 use std::cmp::Ordering;
 use std::ops::Add;
 use std::fmt;
 
+type Actor = Box<dyn AnyActor + Send>;
+
 pub trait AnyActor {
     fn receive(&mut self, envelope: Envelope, sender: &mut dyn AnySender);
+}
+
+pub trait AnySender {
+    fn me(&self) -> &str;
+    fn myself(&self) -> String;
+    fn send(&mut self, address: &str, message: Envelope);
+    fn spawn(&mut self, address: &str, f: fn() -> Actor);
+    fn delay(&mut self, address: &str, envelope: Envelope, duration: Duration);
+    fn stop(&mut self, address: &str);
 }
 
 #[derive(Debug)]
@@ -28,20 +39,30 @@ impl Default for Envelope {
     }
 }
 
-pub trait AnySender {
-    fn send(&mut self, address: &str, message: Envelope);
-    fn spawn(&mut self, address: &str, f: fn(&str) -> Box<dyn AnyActor + Send>);
-    fn delay(&mut self, address: &str, envelope: Envelope, duration: Duration);
-    fn stop(&mut self, address: &str);
+impl Envelope {
+    pub fn of<T: Any + Send>(message: T, from: &str) -> Envelope {
+        Envelope {
+            message: Box::new(message),
+            from: from.to_string(),
+        }
+    }
 }
 
 impl AnySender for Memory<Envelope> {
+    fn me(&self) -> &str {
+        &self.own
+    }
+
+    fn myself(&self) -> String {
+        self.own.clone()
+    }
+
     fn send(&mut self, address: &str, message: Envelope) {
         self.map.entry(address.to_string()).or_default().push(message);
     }
 
-    fn spawn(&mut self, address: &str, f: fn(&str) -> Box<dyn AnyActor + Send>) {
-        self.new.insert(address.to_string(), f(address));
+    fn spawn(&mut self, address: &str, f: fn() -> Actor) {
+        self.new.insert(address.to_string(), f());
     }
 
     fn delay(&mut self, address: &str, envelope: Envelope, duration: Duration) {
@@ -78,58 +99,36 @@ impl Memory<Envelope> {
 
 #[derive(Default)]
 struct Memory<T: Any + Sized + Send> {
+    own: String,
     map: HashMap<String, Vec<T>>,
-    new: HashMap<String, Box<dyn AnyActor + Send>>,
+    new: HashMap<String, Actor>,
     delay: Vec<Entry>,
     stop: HashSet<String>,
 }
 
 #[derive(Default)]
-pub struct Scheduler {
-    actors: HashMap<String, Box<dyn AnyActor + Send>>,
+struct Scheduler {
+    config: SchedulerConfig,
+    actors: HashMap<String, Actor>,
     queue: HashMap<String, Vec<Envelope>>,
     tasks: BinaryHeap<Entry>,
     active: HashSet<String>,
 }
 
-impl Scheduler {
-    pub fn send(&mut self, tag: &str, envelope: Envelope) {
-        self.queue.entry(tag.to_string()).or_default().push(envelope);
-    }
-
-    pub fn spawn(&mut self, tag: &str, f: fn(&str) -> Box<dyn AnyActor + Send>) {
-        if !self.active.contains(tag) {
-            let actor = f(tag);
-            self.actors.insert(tag.to_string(), actor);
-            self.active.insert(tag.to_string());
-        }
-    }
-
-    pub fn delay(&mut self, address: &str, envelope: Envelope, duration: Duration) {
-        let at = Instant::now().add(duration);
-        let entry = Entry { at, tag: address.to_string(), envelope };
-        self.tasks.push(entry);
-    }
-
-    fn stop(&mut self, address: &str) {
-        self.active.remove(address);
-        self.actors.remove(address);
-        self.queue.remove(address);
-    }
-}
-
 // received by Worker threads
 enum Event {
-    Mail { tag: String, actor: Box<dyn AnyActor + Send>, queue: Vec<Envelope> },
+    Mail { tag: String, actor: Actor, queue: Vec<Envelope> },
+    Stop,
 }
 
 // received by the Scheduler thread
 enum Action {
-    Return { tag: String, actor: Box<dyn AnyActor + Send> },
-    Spawn { tag: String, actor: Box<dyn AnyActor + Send> },
+    Return { tag: String, actor: Actor },
+    Spawn { tag: String, actor: Actor },
     Queue { tag: String, queue: Vec<Envelope> },
     Delay { entry: Entry },
     Stop { tag: String },
+    Shutdown,
 }
 
 pub struct Entry {
@@ -205,19 +204,130 @@ impl Default for SchedulerConfig {
     }
 }
 
-// TODO return subscription/handle instead of blocking forever
-pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool, config_opt: Option<SchedulerConfig>) {
-    let config = config_opt.unwrap_or_default();
+struct RuntimeConfig {
+    threads: usize,
+    scheduler: SchedulerConfig,
+}
 
-    let (events_tx, events_rx) = channel();
-    let events_rx = Arc::new(Mutex::new(events_rx));
-    let (actions_tx, actions_rx) = channel();
+impl Default for RuntimeConfig {
+    fn default() -> Self {
+        RuntimeConfig {
+            threads: 4,
+            scheduler: SchedulerConfig::default(),
+        }
+    }
+}
 
-    for (tag, queue) in scheduler.queue.drain() {
-        actions_tx.send(Action::Queue { tag, queue }).unwrap();
+struct Runtime {
+    pool: ThreadPool,
+    config: RuntimeConfig,
+    scheduler: Scheduler,
+    events: (Sender<Event>, Receiver<Event>),
+    actions: (Sender<Action>, Receiver<Action>),
+}
+
+impl Runtime {
+    fn new(pool: ThreadPool, config: RuntimeConfig) -> Runtime {
+        Runtime {
+            pool,
+            config,
+            scheduler: Scheduler::default(),
+            events: channel(),
+            actions: channel(),
+        }
     }
 
-    for _ in 1..pool.size() {
+    fn start(self) -> Run {
+        let sender = self.actions.0.clone();
+        start_actor_runtime(&self.pool, self.scheduler, self.events, self.actions);
+        Run { sender, pool: self.pool }
+    }
+}
+
+#[derive(Default)]
+pub struct Config {
+    runtime: RuntimeConfig,
+}
+
+impl Config {
+    pub fn with_threads(threads: usize) -> Config {
+        Config {
+            runtime: RuntimeConfig {
+                threads,
+                scheduler: SchedulerConfig::default(),
+            }
+        }
+    }
+}
+
+pub struct System {
+    config: Config,
+}
+
+impl System {
+    pub fn new(config: Config) -> System {
+        System {
+            config
+        }
+    }
+
+    pub fn run(self) -> Run {
+        let pool = ThreadPool::new(self.config.runtime.threads);
+        let runtime = Runtime::new(pool, self.config.runtime);
+        runtime.start()
+    }
+}
+
+pub struct Run {
+    pool: ThreadPool,
+    sender: Sender<Action>,
+}
+
+impl Run {
+    pub fn send(&self, address: &str, message: Envelope) {
+        let action = Action::Queue { tag: address.to_string(), queue: vec![message] };
+        self.sender.send(action).unwrap();
+    }
+
+    pub fn spawn<F: FnOnce() -> Actor>(&self, address: &str, f: F) {
+        let action = Action::Spawn { tag: address.to_string(), actor: f() };
+        self.sender.send(action).unwrap();
+    }
+
+    pub fn spawn_default<T: 'static + AnyActor + Send + Default>(&self, address: &str) {
+        let action = Action::Spawn { tag: address.to_string(), actor: Box::new(T::default()) };
+        self.sender.send(action).unwrap();
+    }
+
+    pub fn delay(&self, address: &str, envelope: Envelope, duration: Duration) {
+        let at = Instant::now().add(duration);
+        let entry = Entry { at, tag: address.to_string(), envelope };
+        let action = Action::Delay { entry };
+        self.sender.send(action).unwrap();
+    }
+
+    pub fn stop(&self, address: &str) {
+        let action = Action::Stop { tag: address.to_string() };
+        self.sender.send(action).unwrap();
+    }
+
+    pub fn shutdown(self) {
+        let action = Action::Shutdown;
+        self.sender.send(action).unwrap();
+    }
+}
+
+fn start_actor_runtime(pool: &ThreadPool,
+                       mut scheduler: Scheduler,
+                       events: (Sender<Event>, Receiver<Event>),
+                       actions: (Sender<Action>, Receiver<Action>)) {
+    let config = scheduler.config;
+    let (actions_tx, actions_rx) = actions;
+    let (events_tx, events_rx) = events;
+    let events_rx = Arc::new(Mutex::new(events_rx));
+
+    let total_threads = pool.size();
+    for _ in 1..total_threads {
         let rx = Arc::clone(&events_rx);
         let tx = actions_tx.clone();
 
@@ -228,6 +338,7 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool, confi
                 if let Ok(x) = event {
                     match x {
                         Event::Mail { tag, mut actor, mut queue } => {
+                            memory.own = tag.clone();
                             if queue.len() > config.throughput {
                                 let remaining = queue.split_off(config.throughput);
                                 tx.send(Action::Queue { tag: tag.clone(), queue: remaining }).unwrap();
@@ -235,8 +346,12 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool, confi
                             for envelope in queue.into_iter() {
                                 actor.receive(envelope, &mut memory);
                             }
-                            tx.send(Action::Return { tag, actor }).unwrap();
-                        }
+                            let sent = tx.send(Action::Return { tag, actor });
+                            if sent.is_err() {
+                                break;
+                            }
+                        },
+                        Event::Stop => break
                     }
                     memory.drain(&tx);
                 }
@@ -296,7 +411,15 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool, confi
                         scheduler.tasks.push(entry);
                     },
                     Action::Stop { tag } => {
-                        scheduler.stop(&tag);
+                        scheduler.active.remove(&tag);
+                        scheduler.actors.remove(&tag);
+                        scheduler.queue.remove(&tag);
+                    },
+                    Action::Shutdown => {
+                        for _ in 1..total_threads {
+                            events_tx.send(Event::Stop).unwrap();
+                        }
+                        break;
                     }
                 }
             } else {
@@ -318,6 +441,7 @@ pub fn start_actor_runtime(mut scheduler: Scheduler, mut pool: ThreadPool, confi
                 let now = SystemTime::now();
                 metrics.at = now.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
                 metrics.millis = start.elapsed().as_millis() as u64;
+                // TODO Enable metrics reporting (make it configurable)
                 println!("{:?}", metrics);
                 metrics = SchedulerMetrics::default();
                 start = Instant::now();
