@@ -74,17 +74,16 @@ impl AnyActor for Round {
         if let Some(hit) = envelope.message.downcast_ref::<Hit>() {
             let next = (hit.0 + 1) % self.size;
             let tag = format!("{}", next);
-            let m = Hit(hit.0 + 1);
-            let envelope = Envelope { message: Box::new(m), from: sender.myself() };
-            sender.send(&tag, envelope);
+            let env = Envelope::of(Hit(hit.0 + 1), sender.me());
+            sender.send(&tag, env);
         } else if let Some(acc) = envelope.message.downcast_ref::<Acc>() {
             let next = (acc.zero + acc.hits + 1) % self.size;
             let tag = format!("{}", next);
-            let m = Acc { name: acc.name.clone(), zero: acc.zero, hits: acc.hits + 1 };
-            let env = Envelope { message: Box::new(m), from: sender.myself() };
-            sender.send(&tag, env)
+            let msg = Acc { name: acc.name.clone(), zero: acc.zero, hits: acc.hits + 1 };
+            let env = Envelope::of(msg, sender.me());
+            sender.send(&tag, env);
         } else if let Some(Fan::Out { id }) = envelope.message.downcast_ref::<Fan>() {
-            let env = Envelope { message: Box::new(Fan::In { id: *id }), from: sender.myself() };
+            let env = Envelope::of(Fan::In { id: *id }, sender.me());
             sender.send(&envelope.from, env);
         } else {
             println!("unexpected message: {:?}", envelope.message.type_id());
@@ -136,8 +135,9 @@ impl AnyActor for Periodic {
                 }
                 self.timings.clear();
             }
-            let e = Envelope { message: Box::new(Tick { at: Instant::now() }), from: sender.myself() };
-            sender.delay(&sender.myself(), e, Duration::from_millis(10));
+            let env = Envelope::of(Tick { at: Instant::now() }, sender.me());
+            let delay = Duration::from_millis(10);
+            sender.delay(&sender.myself(), env, delay);
         }
     }
 }
@@ -155,10 +155,10 @@ impl AnyActor for PingPong {
             }
             self.count += 1;
             if s == "ping" {
-                let r = Envelope { message: Box::new("pong".to_string()), from: sender.myself() };
+                let r = Envelope::of("pong".to_string(), sender.me());
                 sender.send(&envelope.from, r);
             } else if s == "pong" {
-                let r = Envelope { message: Box::new("ping".to_string()), from: sender.myself() };
+                let r = Envelope::of("ping".to_string(), sender.me());
                 sender.send(&envelope.from, r);
             }
         }
@@ -178,26 +178,26 @@ pub fn run() {
         run.spawn(&tag, || Box::new(Round::new(SIZE)));
     }
 
-    run.send("0", Envelope { message: Box::new(Hit(0)), from: String::default() });
+    run.send("0", Envelope::of(Hit(0), ""));
 
     for id in 0..1000 {
         let tag = format!("{}", id);
         let acc = Acc { name: tag.clone(), zero: id, hits: 0 };
-        let env = Envelope { message: Box::new(acc), from: tag.clone() };
+        let env = Envelope::of(acc, &tag);
         run.send(&tag, env);
     }
 
     run.spawn_default::<Root>("root");
-    let trigger = Envelope { message: Box::new(Fan::Trigger { size: SIZE }), from: "root".to_string() };
-    run.send("root", trigger);
+    let env = Envelope::of(Fan::Trigger { size: SIZE }, "root");
+    run.send("root", env);
 
     run.spawn_default::<Periodic>("timer");
-    let tick = Envelope { message: Box::new(Tick { at: Instant::now() }), from: "timer".to_string() };
+    let tick = Envelope::of(Tick { at: Instant::now() }, "timer");
     run.delay("timer", tick, Duration::from_secs(10));
 
     run.spawn_default::<PingPong>("ping");
     run.spawn_default::<PingPong>("pong");
 
-    let ping = Envelope { message: Box::new("ping".to_string()), from: "pong".to_string() };
+    let ping = Envelope::of("ping".to_string(), "pong");
     run.send("ping", ping);
 }
