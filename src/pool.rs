@@ -42,7 +42,7 @@ impl ThreadPool {
         }
     }
 
-    pub fn submit<F>(&mut self, f: F)
+    pub fn submit<F>(&self, f: F)
         where
             F: FnOnce() + Send + 'static
     {

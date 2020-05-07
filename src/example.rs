@@ -2,20 +2,10 @@ use std::time::Duration;
 
 use crate::core::{Envelope, AnySender, AnyActor, System, Config};
 
-#[allow(dead_code)]
+#[derive(Default)]
 struct PingPong {
     tag: String,
     count: usize,
-}
-
-impl PingPong {
-    #[allow(dead_code)]
-    fn new(tag: &str) -> PingPong {
-        PingPong {
-            tag: tag.to_string(),
-            count: 0,
-        }
-    }
 }
 
 impl AnyActor for PingPong {
@@ -34,7 +24,7 @@ impl AnyActor for PingPong {
                 sender.send(&envelope.from, r);
             } else {
                 println!("PingPong actor received unexpected string: '{}'", s);
-                sender.spawn("summator", |tag| Box::new(Child::new(tag)));
+                sender.spawn("summator", || Box::new(Child::default()));
                 let m = Envelope { message: Box::new(42 as u64), from: self.tag.clone() };
                 sender.send("summator", m);
             }
@@ -42,30 +32,21 @@ impl AnyActor for PingPong {
     }
 }
 
+#[derive(Default)]
 struct Child {
-    tag: String,
     sum: u64,
-}
-
-impl Child {
-    fn new(tag: &str) -> Child {
-        Child {
-            tag: tag.to_string(),
-            sum: 0,
-        }
-    }
 }
 
 impl AnyActor for Child {
     fn receive(&mut self, envelope: Envelope, sender: &mut dyn AnySender) {
-        println!("Actor '{}' receive2 running: {:?}", self.tag, envelope);
+        println!("Actor '{}' receive2 running: {:?}", sender.myself(), envelope);
         if let Some(x) = envelope.message.downcast_ref::<u64>() {
-            println!("Actor '{}' received message '{}'", self.tag, x);
+            println!("Actor '{}' received message '{}'", sender.myself(), x);
             self.sum += *x;
         } else if let Some(x) = envelope.message.downcast_ref::<String>() {
-            println!("Actor '{}' received message '{}'", self.tag, x);
+            println!("Actor '{}' received message '{}'", sender.myself(), x);
             if x == "get" {
-                let r = Envelope { message: Box::new(self.sum), from: self.tag.clone() };
+                let r = Envelope { message: Box::new(self.sum), from: sender.myself() };
                 sender.send(&envelope.from, r);
             }
         }
@@ -130,9 +111,9 @@ fn high_level_example() {
     let sys = System::new(cfg);
     let run = sys.run();
 
-    run.spawn("root", |_| Box::new(Root::default()));
-    run.spawn("ping", |tag| Box::new(PingPong::new(tag)));
-    run.spawn("pong", |tag| Box::new(PingPong::new(tag)));
+    run.spawn("root", || Box::new(Root::default()));
+    run.spawn("ping", || Box::new(PingPong::default()));
+    run.spawn("pong", || Box::new(PingPong::default()));
 
     let tick = Envelope { message: Box::new(()), from: "root".to_string() };
     run.send("root", tick);

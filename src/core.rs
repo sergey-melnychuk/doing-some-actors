@@ -16,8 +16,10 @@ pub trait AnyActor {
 }
 
 pub trait AnySender {
+    fn me(&self) -> &str;
+    fn myself(&self) -> String;
     fn send(&mut self, address: &str, message: Envelope);
-    fn spawn(&mut self, address: &str, f: fn(&str) -> Actor);
+    fn spawn(&mut self, address: &str, f: fn() -> Actor);
     fn delay(&mut self, address: &str, envelope: Envelope, duration: Duration);
     fn stop(&mut self, address: &str);
 }
@@ -37,13 +39,30 @@ impl Default for Envelope {
     }
 }
 
+impl Envelope {
+    pub fn of<T: Any + Send>(message: T, from: &str) -> Envelope {
+        Envelope {
+            message: Box::new(message),
+            from: from.to_string(),
+        }
+    }
+}
+
 impl AnySender for Memory<Envelope> {
+    fn me(&self) -> &str {
+        &self.own
+    }
+
+    fn myself(&self) -> String {
+        self.own.clone()
+    }
+
     fn send(&mut self, address: &str, message: Envelope) {
         self.map.entry(address.to_string()).or_default().push(message);
     }
 
-    fn spawn(&mut self, address: &str, f: fn(&str) -> Actor) {
-        self.new.insert(address.to_string(), f(address));
+    fn spawn(&mut self, address: &str, f: fn() -> Actor) {
+        self.new.insert(address.to_string(), f());
     }
 
     fn delay(&mut self, address: &str, envelope: Envelope, duration: Duration) {
@@ -80,6 +99,7 @@ impl Memory<Envelope> {
 
 #[derive(Default)]
 struct Memory<T: Any + Sized + Send> {
+    own: String,
     map: HashMap<String, Vec<T>>,
     new: HashMap<String, Actor>,
     delay: Vec<Entry>,
@@ -217,9 +237,9 @@ impl Runtime {
         }
     }
 
-    fn start(mut self) -> Run {
+    fn start(self) -> Run {
         let sender = self.actions.0.clone();
-        start_actor_runtime(&mut self.pool, self.scheduler, self.events, self.actions);
+        start_actor_runtime(&self.pool, self.scheduler, self.events, self.actions);
         Run { sender, pool: self.pool }
     }
 }
@@ -269,8 +289,13 @@ impl Run {
         self.sender.send(action).unwrap();
     }
 
-    pub fn spawn(&self, address: &str, f: fn(&str) -> Actor) {
-        let action = Action::Spawn { tag: address.to_string(), actor: f(address) };
+    pub fn spawn<F: FnOnce() -> Actor>(&self, address: &str, f: F) {
+        let action = Action::Spawn { tag: address.to_string(), actor: f() };
+        self.sender.send(action).unwrap();
+    }
+
+    pub fn spawn_default<T: 'static + AnyActor + Send + Default>(&self, address: &str) {
+        let action = Action::Spawn { tag: address.to_string(), actor: Box::new(T::default()) };
         self.sender.send(action).unwrap();
     }
 
@@ -292,7 +317,7 @@ impl Run {
     }
 }
 
-fn start_actor_runtime(pool: &mut ThreadPool,
+fn start_actor_runtime(pool: &ThreadPool,
                        mut scheduler: Scheduler,
                        events: (Sender<Event>, Receiver<Event>),
                        actions: (Sender<Action>, Receiver<Action>)) {
@@ -313,6 +338,7 @@ fn start_actor_runtime(pool: &mut ThreadPool,
                 if let Ok(x) = event {
                     match x {
                         Event::Mail { tag, mut actor, mut queue } => {
+                            memory.own = tag.clone();
                             if queue.len() > config.throughput {
                                 let remaining = queue.split_off(config.throughput);
                                 tx.send(Action::Queue { tag: tag.clone(), queue: remaining }).unwrap();
@@ -390,7 +416,7 @@ fn start_actor_runtime(pool: &mut ThreadPool,
                         scheduler.queue.remove(&tag);
                     },
                     Action::Shutdown => {
-                        for _ in 0..total_threads {
+                        for _ in 1..total_threads {
                             events_tx.send(Event::Stop).unwrap();
                         }
                         break;
