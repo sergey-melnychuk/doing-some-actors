@@ -1,3 +1,5 @@
+![](https://github.com/sergey-melnychuk/doing-some-actors/workflows/Rust/badge.svg)
+
 Just doing some actors, nothing to see here.
 
 #### TODO
