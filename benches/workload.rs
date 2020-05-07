@@ -10,14 +10,14 @@ mod core;
 
 use crate::core::{System, Config};
 
-fn start_stop(b: &mut Bencher) {
+fn minimum(b: &mut Bencher) {
     b.iter(|| {
         let cfg = Config::default();
         let sys = System::new(cfg);
-        let sub = sys.run();
-        sub.shutdown();
+        let run = sys.run();
+        run.shutdown();
     });
 }
 
-benchmark_group!(benches, start_stop);
+benchmark_group!(benches, minimum);
 benchmark_main!(benches);
