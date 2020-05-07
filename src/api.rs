@@ -142,6 +142,29 @@ impl AnyActor for Periodic {
     }
 }
 
+#[derive(Default)]
+struct PingPong {
+    count: usize,
+}
+
+impl AnyActor for PingPong {
+    fn receive(&mut self, envelope: Envelope, sender: &mut dyn AnySender) {
+        if let Some(s) = envelope.message.downcast_ref::<String>() {
+            if self.count % 1000 == 0 {
+                println!("Actor '{}' (count={}) received message '{}'", sender.myself(), self.count, s);
+            }
+            self.count += 1;
+            if s == "ping" {
+                let r = Envelope { message: Box::new("pong".to_string()), from: sender.myself() };
+                sender.send(&envelope.from, r);
+            } else if s == "pong" {
+                let r = Envelope { message: Box::new("ping".to_string()), from: sender.myself() };
+                sender.send(&envelope.from, r);
+            }
+        }
+    }
+}
+
 pub fn run() {
     let threads = std::cmp::max(5, num_cpus::get());
 
@@ -171,4 +194,10 @@ pub fn run() {
     run.spawn_default::<Periodic>("timer");
     let tick = Envelope { message: Box::new(Tick { at: Instant::now() }), from: "timer".to_string() };
     run.delay("timer", tick, Duration::from_secs(10));
+
+    run.spawn_default::<PingPong>("ping");
+    run.spawn_default::<PingPong>("pong");
+
+    let ping = Envelope { message: Box::new("ping".to_string()), from: "pong".to_string() };
+    run.send("ping", ping);
 }
