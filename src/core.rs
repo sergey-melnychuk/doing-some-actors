@@ -1,52 +1,15 @@
 use std::any::Any;
 use std::collections::{HashMap, BinaryHeap, HashSet};
-
-use crate::pool::ThreadPool;
 use std::sync::mpsc::{channel, Sender, Receiver};
 use std::sync::{Mutex, Arc};
 use std::time::{Instant, Duration, SystemTime};
 use std::cmp::Ordering;
 use std::ops::Add;
-use std::fmt;
 
-type Actor = Box<dyn AnyActor + Send>;
-
-pub trait AnyActor {
-    fn receive(&mut self, envelope: Envelope, sender: &mut dyn AnySender);
-}
-
-pub trait AnySender {
-    fn me(&self) -> &str;
-    fn myself(&self) -> String;
-    fn send(&mut self, address: &str, message: Envelope);
-    fn spawn(&mut self, address: &str, f: fn() -> Actor);
-    fn delay(&mut self, address: &str, envelope: Envelope, duration: Duration);
-    fn stop(&mut self, address: &str);
-}
-
-#[derive(Debug)]
-pub struct Envelope {
-    pub message: Box<dyn Any + Send>,
-    pub from: String,
-}
-
-impl Default for Envelope {
-    fn default() -> Self {
-        Envelope {
-            message: Box::new(()),
-            from: String::default(),
-        }
-    }
-}
-
-impl Envelope {
-    pub fn of<T: Any + Send>(message: T, from: &str) -> Envelope {
-        Envelope {
-            message: Box::new(message),
-            from: from.to_string(),
-        }
-    }
-}
+use crate::api::{Actor, AnyActor, AnySender, Envelope};
+use crate::metrics::{SchedulerMetrics};
+use crate::config::{Config, SchedulerConfig};
+use crate::pool::ThreadPool;
 
 impl AnySender for Memory<Envelope> {
     fn me(&self) -> &str {
@@ -106,13 +69,24 @@ struct Memory<T: Any + Sized + Send> {
     stop: HashSet<String>,
 }
 
-#[derive(Default)]
 struct Scheduler {
     config: SchedulerConfig,
     actors: HashMap<String, Actor>,
     queue: HashMap<String, Vec<Envelope>>,
     tasks: BinaryHeap<Entry>,
     active: HashSet<String>,
+}
+
+impl Scheduler {
+    fn with_config(config: SchedulerConfig) -> Scheduler {
+        Scheduler {
+            config,
+            actors: HashMap::default(),
+            queue: HashMap::default(),
+            tasks: BinaryHeap::default(),
+            active: HashSet::default(),
+        }
+    }
 }
 
 // received by Worker threads
@@ -131,7 +105,7 @@ enum Action {
     Shutdown,
 }
 
-pub struct Entry {
+struct Entry {
     at: Instant,
     tag: String,
     envelope: Envelope,
@@ -157,81 +131,18 @@ impl PartialOrd for Entry {
     }
 }
 
-#[derive(Default)]
-struct SchedulerMetrics {
-    at: u64,
-    millis: u64,
-    miss: u64,
-    hit: u64,
-    tick: u64,
-    messages: u64,
-    queues: u64,
-    returns: u64,
-    spawns: u64,
-    delays: u64,
-}
-
-impl fmt::Debug for SchedulerMetrics {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SchedulerMetrics")
-            .field("at", &self.at)
-            .field("millis", &self.millis)
-            .field("miss", &self.miss)
-            .field("hit", &self.hit)
-            .field("tick", &self.tick)
-            .field("messages", &self.messages)
-            .field("queues", &self.queues)
-            .field("returns", &self.returns)
-            .field("spawns", &self.spawns)
-            .field("delays", &self.delays)
-            .finish()
-    }
-}
-
-#[derive(Copy, Clone)]
-pub struct SchedulerConfig {
-    // Maximum number of envelopes an actor can process at single scheduled execution
-    throughput: usize,
-    metric_reporting_interval: Duration,
-}
-
-impl Default for SchedulerConfig {
-    fn default() -> Self {
-        SchedulerConfig {
-            throughput: 1,
-            metric_reporting_interval: Duration::from_secs(1),
-        }
-    }
-}
-
-struct RuntimeConfig {
-    threads: usize,
-    scheduler: SchedulerConfig,
-}
-
-impl Default for RuntimeConfig {
-    fn default() -> Self {
-        RuntimeConfig {
-            threads: 4,
-            scheduler: SchedulerConfig::default(),
-        }
-    }
-}
-
 struct Runtime {
     pool: ThreadPool,
-    config: RuntimeConfig,
     scheduler: Scheduler,
     events: (Sender<Event>, Receiver<Event>),
     actions: (Sender<Action>, Receiver<Action>),
 }
 
 impl Runtime {
-    fn new(pool: ThreadPool, config: RuntimeConfig) -> Runtime {
+    fn new(pool: ThreadPool, scheduler: SchedulerConfig) -> Runtime {
         Runtime {
             pool,
-            config,
-            scheduler: Scheduler::default(),
+            scheduler: Scheduler::with_config(scheduler),
             events: channel(),
             actions: channel(),
         }
@@ -245,21 +156,6 @@ impl Runtime {
 }
 
 #[derive(Default)]
-pub struct Config {
-    runtime: RuntimeConfig,
-}
-
-impl Config {
-    pub fn with_threads(threads: usize) -> Config {
-        Config {
-            runtime: RuntimeConfig {
-                threads,
-                scheduler: SchedulerConfig::default(),
-            }
-        }
-    }
-}
-
 pub struct System {
     config: Config,
 }
@@ -273,7 +169,7 @@ impl System {
 
     pub fn run(self) -> Run {
         let pool = ThreadPool::new(self.config.runtime.threads);
-        let runtime = Runtime::new(pool, self.config.runtime);
+        let runtime = Runtime::new(pool, self.config.scheduler);
         runtime.start()
     }
 }
@@ -314,6 +210,10 @@ impl Run {
     pub fn shutdown(self) {
         let action = Action::Shutdown;
         self.sender.send(action).unwrap();
+    }
+
+    pub fn submit<F: FnOnce() + Send + 'static>(&self, f: F) {
+        self.pool.submit(f);
     }
 }
 

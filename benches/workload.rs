@@ -2,14 +2,26 @@
 extern crate bencher;
 use bencher::Bencher;
 
+use std::sync::mpsc::{Sender, channel};
+
 #[path = "../src/pool.rs"]
 mod pool;
+
+#[path = "../src/api.rs"]
+mod api;
+
+#[path = "../src/config.rs"]
+mod config;
+
+#[path = "../src/metrics.rs"]
+mod metrics;
 
 #[path = "../src/core.rs"]
 mod core;
 
-use crate::core::{System, Config, AnyActor, AnySender, Envelope};
-use std::sync::mpsc::{Sender, channel};
+use crate::api::{Envelope, AnyActor, AnySender};
+use crate::core::System;
+use crate::config::Config;
 
 fn minimum(b: &mut Bencher) {
     b.iter(|| {
