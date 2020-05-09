@@ -2,9 +2,9 @@ use std::sync::mpsc::{channel, Sender, Receiver};
 use std::thread;
 use std::thread::JoinHandle;
 use std::sync::{Arc, Mutex};
-use self::core_affinity::CoreId;
 
 extern crate core_affinity;
+use core_affinity::CoreId;
 
 type Runnable = Box<dyn FnOnce() + Send + 'static>;
 

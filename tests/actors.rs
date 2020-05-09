@@ -1,14 +1,26 @@
 #[path = "../src/pool.rs"]
 mod pool;
 
+#[path = "../src/api.rs"]
+mod api;
+
+#[path = "../src/config.rs"]
+mod config;
+
+#[path = "../src/metrics.rs"]
+mod metrics;
+
 #[path = "../src/core.rs"]
 mod core;
 
-use crate::core::{AnyActor, AnySender, Envelope, System, Config, Run};
 use std::sync::mpsc::{channel, Sender, RecvTimeoutError};
 use std::fmt::Debug;
 use std::time::Duration;
 use std::ops::Add;
+
+use doing_some_actors::api::{AnyActor, Envelope, AnySender};
+use doing_some_actors::core::{Run, System};
+use doing_some_actors::config::Config;
 
 const ANSWER: usize = 42;
 
