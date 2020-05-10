@@ -83,5 +83,45 @@ fn counter(b: &mut Bencher) {
     });
 }
 
-benchmark_group!(benches, minimum, counter);
+fn chain(b: &mut Bencher) {
+    const LENGTH: usize = 1000;
+
+    struct Hit(Sender<usize>, usize);
+
+    #[derive(Default)]
+    struct Chain;
+
+    impl AnyActor for Chain {
+        fn receive(&mut self, envelope: Envelope, sender: &mut dyn AnySender) {
+            if let Some(Hit(tx, hits)) = envelope.message.downcast_ref::<Hit>() {
+                if *hits < LENGTH {
+                    let tag = format!("{}", hits + 1);
+                    sender.spawn(&tag, || Box::new(Chain));
+                    let env = Envelope::of(Hit(tx.to_owned(), hits + 1), "");
+                    sender.send(&tag, env);
+                } else {
+                    tx.send(*hits).unwrap();
+                }
+                let me = &sender.myself();
+                sender.stop(&me);
+            }
+        }
+    }
+
+    b.iter(|| {
+        let cfg = Config::default();
+        let sys = System::new(cfg);
+        let run = sys.run();
+
+        let (tx, rx) = channel();
+        run.spawn_default::<Chain>("0");
+        run.send("0", Envelope::of(Hit(tx, 0), ""));
+
+        rx.recv().unwrap();
+
+        run.shutdown();
+    });
+}
+
+benchmark_group!(benches, minimum, counter, chain);
 benchmark_main!(benches);
