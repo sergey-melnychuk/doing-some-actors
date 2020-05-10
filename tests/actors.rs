@@ -81,7 +81,7 @@ fn with_run<T: Eq + Debug, E, F: FnOnce(&Run) -> Result<T, E>>(expected: T, f: F
     Ok(())
 }
 
-const TIMEOUT: Duration = Duration::from_millis(200);
+const TIMEOUT: Duration = Duration::from_millis(500);
 
 #[test]
 fn sent_message_received() -> Result<(), RecvTimeoutError> {
