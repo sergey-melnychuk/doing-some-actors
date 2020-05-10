@@ -1,7 +1,8 @@
 use std::collections::{HashSet, HashMap};
 use std::time::{Instant, Duration};
 
-use doing_some_actors::api::{AnyActor, Envelope, AnySender};
+extern crate doing_some_actors;
+use doing_some_actors::api::{AnyActor, AnySender, Envelope};
 use doing_some_actors::core::System;
 
 struct Round {
