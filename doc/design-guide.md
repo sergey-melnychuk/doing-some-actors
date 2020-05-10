@@ -154,6 +154,7 @@ configuration remains static, thus can be restarted any required number of attem
      - `fn(&[u8]) -> Option<T>`
      - `fn(T) -> Vec<u8>` 
      - or `fn(T, &mut [u8]) -> Result<usize>` (potentially no allocation)
+     - [bincode](https://github.com/servo/bincode)
 
 #### References
 
