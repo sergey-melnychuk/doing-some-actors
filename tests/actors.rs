@@ -21,6 +21,7 @@ use std::ops::Add;
 use doing_some_actors::api::{AnyActor, Envelope, AnySender};
 use doing_some_actors::core::{Run, System};
 use doing_some_actors::config::Config;
+use doing_some_actors::pool::ThreadPool;
 
 const ANSWER: usize = 42;
 
@@ -70,8 +71,9 @@ impl AnyActor for Counter {
 
 fn with_run<T: Eq + Debug, E, F: FnOnce(&Run) -> Result<T, E>>(expected: T, f: F) -> Result<(), E> {
     let cfg = Config::default();
+    let pool: ThreadPool = ThreadPool::for_config(&cfg);
     let sys = System::new(cfg);
-    let run = sys.run();
+    let run = sys.run(&pool).unwrap();
     let got = f(&run);
     run.shutdown();
     let actual = got?;

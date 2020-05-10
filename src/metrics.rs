@@ -1,6 +1,6 @@
 use std::fmt;
 
-#[derive(Default)]
+#[derive(Default, Copy, Clone)]
 pub struct SchedulerMetrics {
     pub at: u64,
     pub millis: u64,
