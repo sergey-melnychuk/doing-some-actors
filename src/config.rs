@@ -20,6 +20,7 @@ pub struct SchedulerConfig {
     // Maximum number of envelopes an actor can process at single scheduled execution
     pub(crate) throughput: usize,
     pub(crate) metric_reporting_interval: Duration,
+    pub(crate) delay_precision: Duration,
 }
 
 impl Default for SchedulerConfig {
@@ -27,6 +28,7 @@ impl Default for SchedulerConfig {
         SchedulerConfig {
             throughput: 1,
             metric_reporting_interval: Duration::from_secs(1),
+            delay_precision: Duration::from_millis(1),
         }
     }
 }

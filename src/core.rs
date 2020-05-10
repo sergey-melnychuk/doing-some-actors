@@ -314,9 +314,7 @@ fn event_loop(actions_rx: Receiver<Action>,
             metrics.miss +=1 ;
         }
 
-        // TODO Collect statistic about running time of this loop to estimate `precision`
-        let precision = Duration::from_millis(1);
-        let now = Instant::now().add(precision);
+        let now = Instant::now().add(scheduler.config.delay_precision);
         while scheduler.tasks.peek().map(|e| e.at <= now).unwrap_or_default() {
             if let Some(Entry { tag, envelope, .. }) = scheduler.tasks.pop() {
                 let action = Action::Queue { tag, queue: vec![envelope] };
