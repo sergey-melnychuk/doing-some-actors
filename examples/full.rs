@@ -4,6 +4,7 @@ use std::time::{Instant, Duration};
 extern crate doing_some_actors;
 use doing_some_actors::api::{AnyActor, AnySender, Envelope};
 use doing_some_actors::core::System;
+use doing_some_actors::pool::ThreadPool;
 
 struct Round {
     size: usize,
@@ -168,8 +169,10 @@ impl AnyActor for PingPong {
 }
 
 fn main() {
+    let pool = ThreadPool::new(4);
+
     let sys = System::default();
-    let run = sys.run();
+    let run = sys.run(&pool).unwrap();
 
     const SIZE: usize = 100_000;
     for id in 0..SIZE {

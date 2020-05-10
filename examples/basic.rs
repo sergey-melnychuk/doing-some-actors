@@ -3,6 +3,7 @@ use std::sync::mpsc::{channel, Sender};
 extern crate doing_some_actors;
 use doing_some_actors::api::{AnyActor, Envelope, AnySender};
 use doing_some_actors::core::System;
+use doing_some_actors::pool::ThreadPool;
 
 struct Message(usize, Sender<usize>);
 
@@ -20,7 +21,8 @@ impl AnyActor for State {
 
 fn main() {
     let sys = System::default();
-    let run = sys.run();
+    let pool = ThreadPool::new(4);
+    let run = sys.run(&pool).unwrap();
 
     run.spawn_default::<State>("x");
 

@@ -9,7 +9,7 @@ use std::ops::Add;
 use crate::api::{Actor, AnyActor, AnySender, Envelope};
 use crate::metrics::{SchedulerMetrics};
 use crate::config::{Config, SchedulerConfig};
-use crate::pool::ThreadPool;
+use crate::pool::{ThreadPool, Runnable};
 
 impl AnySender for Memory<Envelope> {
     fn me(&self) -> &str {
@@ -131,26 +131,26 @@ impl PartialOrd for Entry {
     }
 }
 
-struct Runtime {
-    pool: ThreadPool,
-    scheduler: Scheduler,
-    events: (Sender<Event>, Receiver<Event>),
-    actions: (Sender<Action>, Receiver<Action>),
+struct Runtime<'a> {
+    pool: &'a ThreadPool,
+    config: SchedulerConfig,
 }
 
-impl Runtime {
-    fn new(pool: ThreadPool, scheduler: SchedulerConfig) -> Runtime {
+impl<'a> Runtime<'a> {
+    fn new(pool: &'a ThreadPool, config: SchedulerConfig) -> Runtime {
         Runtime {
             pool,
-            scheduler: Scheduler::with_config(scheduler),
-            events: channel(),
-            actions: channel(),
+            config,
         }
     }
 
-    fn start(self) -> Run {
-        let sender = self.actions.0.clone();
-        start_actor_runtime(&self.pool, self.scheduler, self.events, self.actions);
+    fn start(&self) -> Run<'a> {
+        let scheduler = Scheduler::with_config(self.config.clone());
+        let events = channel();
+        let actions = channel();
+
+        let sender = actions.0.clone();
+        start_actor_runtime(self.pool, scheduler, events, actions);
         Run { sender, pool: self.pool }
     }
 }
@@ -167,21 +167,25 @@ impl System {
         }
     }
 
-    pub fn run(self) -> Run {
+    pub fn run(self, pool: &ThreadPool) -> Result<Run, &'static str> {
         // TODO FIXME Provide max number of threads in the pool and number of actor-threads
         // Actor-threads will run infinite event loops, so other threads can run closures on demand
-        let pool = ThreadPool::new(self.config.runtime.threads);
-        let runtime = Runtime::new(pool, self.config.scheduler);
-        runtime.start()
+        //let pool = ThreadPool::new(self.config.runtime.threads);
+        if pool.size() < self.config.scheduler.total_threads_required() {
+            Result::Err("Not enough threds in the pool")
+        } else {
+            let runtime = Runtime::new(pool, self.config.scheduler);
+            Ok(runtime.start())
+        }
     }
 }
 
-pub struct Run {
-    pool: ThreadPool,
+pub struct Run<'a> {
+    pool: &'a ThreadPool,
     sender: Sender<Action>,
 }
 
-impl Run {
+impl<'a> Run<'a> {
     pub fn send(&self, address: &str, message: Envelope) {
         let action = Action::Queue { tag: address.to_string(), queue: vec![message] };
         self.sender.send(action).unwrap();
@@ -230,8 +234,8 @@ fn worker_loop(tx: Sender<Action>,
             match x {
                 Event::Mail { tag, mut actor, mut queue } => {
                     memory.own = tag.clone();
-                    if queue.len() > config.throughput {
-                        let remaining = queue.split_off(config.throughput);
+                    if queue.len() > config.actor_throughput {
+                        let remaining = queue.split_off(config.actor_throughput);
                         tx.send(Action::Queue { tag: tag.clone(), queue: remaining }).unwrap();
                     }
                     for envelope in queue.into_iter() {
@@ -252,7 +256,8 @@ fn worker_loop(tx: Sender<Action>,
 fn event_loop(actions_rx: Receiver<Action>,
               actions_tx: Sender<Action>,
               events_tx: Sender<Event>,
-              mut scheduler: Scheduler) {
+              mut scheduler: Scheduler,
+              pool_link: impl Fn(Runnable)) {
     let mut metrics = SchedulerMetrics::default();
     let mut start = Instant::now();
     loop {
@@ -265,8 +270,8 @@ fn event_loop(actions_rx: Receiver<Action>,
                         metrics.returns += 1;
                         let mut queue = scheduler.queue.remove(&tag).unwrap_or_default();
                         if !queue.is_empty() {
-                            if queue.len() > scheduler.config.throughput {
-                                let remaining = queue.split_off(scheduler.config.throughput);
+                            if queue.len() > scheduler.config.actor_throughput {
+                                let remaining = queue.split_off(scheduler.config.actor_throughput);
                                 scheduler.queue.insert(tag.clone(), remaining);
                             }
                             actions_tx.send(Action::Queue { tag: tag.clone(), queue }).unwrap();
@@ -328,7 +333,10 @@ fn event_loop(actions_rx: Receiver<Action>,
             metrics.at = now.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
             metrics.millis = start.elapsed().as_millis() as u64;
             // TODO Enable metrics reporting (make it configurable)
-            println!("{:?}", metrics);
+
+            let cloned_metrics = metrics.clone();
+            pool_link(Box::new(move || println!("{:?}", cloned_metrics)));
+
             metrics = SchedulerMetrics::default();
             start = Instant::now();
         }
@@ -354,8 +362,9 @@ fn start_actor_runtime(pool: &ThreadPool,
         });
     }
 
+    let pool_link = pool.link();
     pool.submit(move || {
-        event_loop(actions_rx, actions_tx, events_tx.clone(), scheduler);
+        event_loop(actions_rx, actions_tx, events_tx.clone(), scheduler, pool_link);
         for _ in 1..thread_count {
             events_tx.send(Event::Stop).unwrap();
         }

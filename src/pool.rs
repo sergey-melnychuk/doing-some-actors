@@ -5,8 +5,9 @@ use std::sync::{Arc, Mutex};
 
 extern crate core_affinity;
 use core_affinity::CoreId;
+use crate::config::Config;
 
-type Runnable = Box<dyn FnOnce() + Send + 'static>;
+pub type Runnable = Box<dyn FnOnce() + Send + 'static>;
 
 enum Job {
     Task(Runnable),
@@ -19,6 +20,10 @@ pub struct ThreadPool {
 }
 
 impl ThreadPool {
+    pub fn for_config(config: &Config) -> ThreadPool {
+        ThreadPool::new(config.scheduler.total_threads_required())
+    }
+
     pub fn new(size: usize) -> ThreadPool {
         let (sender, receiver) = channel();
         let receiver = Arc::new(Mutex::new(receiver));
@@ -52,6 +57,13 @@ impl ThreadPool {
 
     pub fn size(&self) -> usize {
         self.workers.len()
+    }
+
+    pub fn link<'a>(&self) -> impl Fn(Runnable) + 'a {
+        let s = self.sender.clone();
+        move |r| {
+            s.send(Job::Task(r)).unwrap();
+        }
     }
 }
 

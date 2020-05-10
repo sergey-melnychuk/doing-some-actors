@@ -22,12 +22,14 @@ mod core;
 use crate::api::{Envelope, AnyActor, AnySender};
 use crate::core::System;
 use crate::config::Config;
+use crate::pool::ThreadPool;
 
 fn minimum(b: &mut Bencher) {
+    let cfg = Config::default();
+    let pool: ThreadPool = ThreadPool::for_config(&cfg);
     b.iter(|| {
-        let cfg = Config::default();
         let sys = System::new(cfg);
-        let run = sys.run();
+        let run = sys.run(&pool).unwrap();
         run.shutdown();
     });
 }
@@ -68,10 +70,11 @@ fn counter(b: &mut Bencher) {
         }
     }
 
+    let cfg = Config::default();
+    let pool: ThreadPool = ThreadPool::for_config(&cfg);
     b.iter(|| {
-        let cfg = Config::default();
         let sys = System::new(cfg);
-        let run = sys.run();
+        let run = sys.run(&pool).unwrap();
 
         let (tx, rx) = channel();
         run.spawn_default::<Test>("test");
@@ -108,10 +111,11 @@ fn chain(b: &mut Bencher) {
         }
     }
 
+    let cfg = Config::default();
+    let pool: ThreadPool = ThreadPool::for_config(&cfg);
     b.iter(|| {
-        let cfg = Config::default();
         let sys = System::new(cfg);
-        let run = sys.run();
+        let run = sys.run(&pool).unwrap();
 
         let (tx, rx) = channel();
         run.spawn_default::<Chain>("0");

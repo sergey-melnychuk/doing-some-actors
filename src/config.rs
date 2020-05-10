@@ -1,15 +1,13 @@
 use std::time::Duration;
 
-#[derive(Default)]
+#[derive(Default, Copy, Clone)]
 pub struct Config {
-    pub(crate) runtime: RuntimeConfig,
     pub(crate) scheduler: SchedulerConfig,
 }
 
 impl Config {
-    pub fn new(runtime: RuntimeConfig, scheduler: SchedulerConfig) -> Config {
+    pub fn new(scheduler: SchedulerConfig) -> Config {
         Config {
-            runtime,
             scheduler,
         }
     }
@@ -18,37 +16,27 @@ impl Config {
 #[derive(Copy, Clone)]
 pub struct SchedulerConfig {
     // Maximum number of envelopes an actor can process at single scheduled execution
-    pub(crate) throughput: usize,
+    pub(crate) actor_throughput: usize,
     pub(crate) metric_reporting_interval: Duration,
     pub(crate) delay_precision: Duration,
+    pub(crate) actor_worker_threads: usize,
+    pub(crate) extra_worker_threads: usize,
 }
 
 impl Default for SchedulerConfig {
     fn default() -> Self {
         SchedulerConfig {
-            throughput: 1,
+            actor_throughput: 1,
             metric_reporting_interval: Duration::from_secs(1),
             delay_precision: Duration::from_millis(1),
+            actor_worker_threads: 4,
+            extra_worker_threads: 1,
         }
     }
 }
 
-pub struct RuntimeConfig {
-    pub(crate) threads: usize,
-}
-
-impl RuntimeConfig {
-    pub fn with_threads(threads: usize) -> RuntimeConfig {
-        RuntimeConfig {
-            threads,
-        }
-    }
-}
-
-impl Default for RuntimeConfig {
-    fn default() -> Self {
-        RuntimeConfig {
-            threads: 4,
-        }
+impl SchedulerConfig {
+    pub(crate) fn total_threads_required(&self) -> usize {
+        self.actor_worker_threads + self.extra_worker_threads + 1
     }
 }
