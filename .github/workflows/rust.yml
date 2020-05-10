@@ -29,4 +29,4 @@ jobs:
         # The maximum time in seconds without a response from a test before timeout
         #timeout: # optional
         # The type of the coverage run [possible values: Tests, Doctests]
-        run-types: Tests, Doctests
+        run-types: Tests
