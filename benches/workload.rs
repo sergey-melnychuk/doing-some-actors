@@ -32,42 +32,42 @@ fn minimum(b: &mut Bencher) {
     });
 }
 
-#[derive(Default)]
-struct Test {
-    count: usize,
-    limit: usize,
-    tx: Option<Sender<usize>>,
-}
+fn counter(b: &mut Bencher) {
+    #[derive(Default)]
+    struct Test {
+        count: usize,
+        limit: usize,
+        tx: Option<Sender<usize>>,
+    }
 
-enum Protocol {
-    Init(usize, Sender<usize>),
-    Hit,
-}
+    enum Protocol {
+        Init(usize, Sender<usize>),
+        Hit,
+    }
 
-impl AnyActor for Test {
-    fn receive(&mut self, envelope: Envelope, sender: &mut dyn AnySender) {
-        if let Some(p) = envelope.message.downcast_ref::<Protocol>() {
-            let me = sender.myself();
-            match p {
-                Protocol::Init(limit, tx) => {
-                    self.limit = *limit;
-                    self.tx = Some(tx.to_owned());
-                    sender.send(&me, Envelope::of(Protocol::Hit, &me));
-                },
-                Protocol::Hit if self.count < self.limit => {
-                    self.count += 1;
-                    sender.send(&me, Envelope::of(Protocol::Hit, &me));
-                },
-                Protocol::Hit => {
-                    self.tx.take().unwrap().send(self.count).unwrap();
-                    sender.stop(&me);
+    impl AnyActor for Test {
+        fn receive(&mut self, envelope: Envelope, sender: &mut dyn AnySender) {
+            if let Some(p) = envelope.message.downcast_ref::<Protocol>() {
+                let me = sender.myself();
+                match p {
+                    Protocol::Init(limit, tx) => {
+                        self.limit = *limit;
+                        self.tx = Some(tx.to_owned());
+                        sender.send(&me, Envelope::of(Protocol::Hit, &me));
+                    },
+                    Protocol::Hit if self.count < self.limit => {
+                        self.count += 1;
+                        sender.send(&me, Envelope::of(Protocol::Hit, &me));
+                    },
+                    Protocol::Hit => {
+                        self.tx.take().unwrap().send(self.count).unwrap();
+                        sender.stop(&me);
+                    }
                 }
             }
         }
     }
-}
 
-fn counter(b: &mut Bencher) {
     b.iter(|| {
         let cfg = Config::default();
         let sys = System::new(cfg);
