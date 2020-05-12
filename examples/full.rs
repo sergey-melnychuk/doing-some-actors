@@ -169,7 +169,7 @@ impl AnyActor for PingPong {
 }
 
 fn main() {
-    let pool = ThreadPool::new(4);
+    let pool = ThreadPool::new(6);
 
     let sys = System::default();
     let run = sys.run(&pool).unwrap();
@@ -202,4 +202,6 @@ fn main() {
 
     let ping = Envelope::of("ping".to_string(), "pong");
     run.send("ping", ping);
+
+    std::thread::park(); // block current thread (https://doc.rust-lang.org/std/thread/fn.park.html)
 }

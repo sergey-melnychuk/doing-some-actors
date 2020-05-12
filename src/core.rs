@@ -168,11 +168,8 @@ impl System {
     }
 
     pub fn run(self, pool: &ThreadPool) -> Result<Run, &'static str> {
-        // TODO FIXME Provide max number of threads in the pool and number of actor-threads
-        // Actor-threads will run infinite event loops, so other threads can run closures on demand
-        //let pool = ThreadPool::new(self.config.runtime.threads);
         if pool.size() < self.config.scheduler.total_threads_required() {
-            Result::Err("Not enough threds in the pool")
+            Result::Err("Not enough threads in the pool")
         } else {
             let runtime = Runtime::new(pool, self.config.scheduler);
             Ok(runtime.start())
@@ -334,8 +331,7 @@ fn event_loop(actions_rx: Receiver<Action>,
             metrics.millis = start.elapsed().as_millis() as u64;
             // TODO Enable metrics reporting (make it configurable)
 
-            let cloned_metrics = metrics.clone();
-            pool_link(Box::new(move || println!("{:?}", cloned_metrics)));
+            pool_link(Box::new(move || println!("{:?}", metrics.clone())));
 
             metrics = SchedulerMetrics::default();
             start = Instant::now();
@@ -351,8 +347,8 @@ fn start_actor_runtime(pool: &ThreadPool,
     let (events_tx, events_rx) = events;
     let events_rx = Arc::new(Mutex::new(events_rx));
 
-    let thread_count = pool.size();
-    for _ in 1..thread_count {
+    let thread_count = scheduler.config.actor_worker_threads;
+    for _ in 0..thread_count {
         let rx = Arc::clone(&events_rx);
         let tx = actions_tx.clone();
         let config = scheduler.config.clone();
@@ -365,7 +361,7 @@ fn start_actor_runtime(pool: &ThreadPool,
     let pool_link = pool.link();
     pool.submit(move || {
         event_loop(actions_rx, actions_tx, events_tx.clone(), scheduler, pool_link);
-        for _ in 1..thread_count {
+        for _ in 0..thread_count {
             events_tx.send(Event::Stop).unwrap();
         }
     });

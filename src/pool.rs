@@ -60,9 +60,9 @@ impl ThreadPool {
     }
 
     pub fn link<'a>(&self) -> impl Fn(Runnable) + 'a {
-        let s = self.sender.clone();
-        move |r| {
-            s.send(Job::Task(r)).unwrap();
+        let sender = self.sender.clone();
+        move |r: Runnable| {
+            sender.send(Job::Task(r)).unwrap();
         }
     }
 }
